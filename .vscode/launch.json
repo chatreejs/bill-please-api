@@ -1,0 +1,48 @@
+{
+  // Needs the Bun extension (oven.bun-vscode). Bun loads .env on its own.
+  // F5 debugs, Ctrl+F5 runs without the debugger.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Server",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/index.ts",
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Server (watch)",
+      "type": "bun",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/index.ts",
+      "cwd": "${workspaceFolder}",
+      "watchMode": true,
+      "stopOnEntry": false
+    },
+    {
+      "name": "Tests: all",
+      "type": "bun",
+      "request": "launch",
+      "runtimeArgs": ["test"],
+      "program": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Tests: current file",
+      "type": "bun",
+      "request": "launch",
+      "runtimeArgs": ["test"],
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "stopOnEntry": false
+    },
+    {
+      "name": "Attach to Bun",
+      "type": "bun",
+      "request": "attach",
+      "url": "ws://localhost:6499/"
+    }
+  ]
+}
