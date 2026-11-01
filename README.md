@@ -7,12 +7,41 @@ One server exposes the same receipt scanner in two ways:
 
 | Endpoint | Protocol | Used by |
 |---|---|---|
-| `POST /api/receipts/scan` | REST, `multipart/form-data` with an `image` field | bill-please web |
+| `POST /api/receipts/scan` | REST, `multipart/form-data` with `image` and `cf-turnstile-response` fields | bill-please web |
 | `/mcp` | [MCP](https://modelcontextprotocol.io) Streamable HTTP, stateless | AI clients such as Claude, ChatGPT and Cursor |
 | `GET /health` | REST | The Docker healthcheck, and bill-please web to enable "Add from bill" |
 
 It runs on [Bun](https://bun.sh) with [ElysiaJS](https://elysiajs.com), the official
 [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and zod.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    web["bill-please web<br/>React PWA"]
+    ai["AI clients<br/>Claude, ChatGPT, Cursor"]
+    mcp["bill-please-mcp<br/>Bun + Elysia"]
+    turnstile["Cloudflare Turnstile<br/>siteverify"]
+    ocr["bill-please-ocr<br/>FastAPI + PaddleOCR"]
+    llm["llm-server<br/>llama.cpp, OpenAI compatible API"]
+
+    web -- "POST /api/receipts/scan<br/>GET /health" --> mcp
+    ai -- "/mcp" --> mcp
+    mcp -- "verify token" --> turnstile
+    mcp -- "POST /v1/ocr<br/>photo" --> ocr
+    mcp -- "POST /chat/completions<br/>OCR text only" --> llm
+```
+
+A scan from the web goes through these steps:
+
+1. bill-please web resizes the photo to a JPEG of at most 1600 px and uploads it
+   with a Turnstile token.
+2. bill-please-mcp checks the Turnstile token with Cloudflare. `/mcp` skips this
+   step and relies on the rate limit.
+3. bill-please-mcp sends the photo to bill-please-ocr and gets back text lines.
+4. bill-please-mcp sends only the OCR text to llm-server, which returns the items
+   and the receipt rates.
+5. bill-please-mcp checks the items against the printed total and returns them.
 
 ## Response contract
 
@@ -87,7 +116,7 @@ Logs are JSON lines, one object per record, for Loki or any log collector:
 {"time":"2026-10-30T15:34:11.908Z","level":"info","service":"bill-please-mcp","logger":"http.access","requestId":"982c4a53","msg":"GET /health 200 3ms","http":{"method":"GET","path":"/health","status":200,"durationMs":3},"clientIp":"::1","userAgent":"Mozilla/5.0"}
 ```
 
-An error is logged as an `error` field with `type`, `message`, `stack` and `cause`.
+The logger writes an error as an `error` field with `type`, `message`, `stack` and `cause`.
 
 `LOG_LEVEL` sets the level to `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF`.
 The default is `INFO`. Every response has an `X-Request-Id` header. Send your own
@@ -137,4 +166,4 @@ Please read the [contributing guidelines](./CONTRIBUTING.md) and follow the
 
 ## License
 
-Released under the [AGPL-3.0 License](./LICENSE).
+The project uses the [AGPL-3.0 License](./LICENSE).
