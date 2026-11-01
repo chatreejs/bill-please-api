@@ -10,14 +10,17 @@ const float = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const list = (value: string | undefined) =>
+  (value ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 const url = (value: string | undefined, fallback: string) => (value || fallback).replace(/\/+$/, '');
 
 export const config = {
   port: int(Bun.env.PORT, 3001),
-  corsOrigins: (Bun.env.CORS_ORIGINS ?? 'http://localhost:3000')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
+  corsOrigins: list(Bun.env.CORS_ORIGINS ?? 'http://localhost:3000'),
   maxImageBytes: int(Bun.env.MAX_IMAGE_BYTES, 5 * 1024 * 1024),
   rateLimitPerMinute: int(Bun.env.RATE_LIMIT_PER_MINUTE, 30),
   trustProxy: Bun.env.TRUST_PROXY === 'true',
@@ -33,6 +36,10 @@ export const config = {
   llmReasoningEffort: Bun.env.LLM_REASONING_EFFORT ?? 'none',
   // gbnf sends a compact grammar that only llama.cpp accepts. json_schema works with any OpenAI compatible API.
   llmOutputFormat: Bun.env.LLM_OUTPUT_FORMAT === 'json_schema' ? ('json_schema' as const) : ('gbnf' as const),
+  // Cloudflare Turnstile secret key. Empty turns the check on POST /api/receipts/scan off
+  turnstileSecretKey: Bun.env.TURNSTILE_SECRET_KEY || undefined,
+  turnstileHostnames: list(Bun.env.TURNSTILE_HOSTNAMES),
+  turnstileTimeoutMs: int(Bun.env.TURNSTILE_TIMEOUT_MS, 10000),
   logLevel: parseLogLevel(Bun.env.LOG_LEVEL),
 };
 

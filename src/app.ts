@@ -7,8 +7,17 @@ import { mcpRoutes } from './mcp/route.ts';
 import { clientIp, requestLogger } from './request-logger.ts';
 import { receiptRoutes } from './routes/receipts.ts';
 import type { ReceiptScanner } from './scanners/index.ts';
+import { createTurnstileVerifier, type TurnstileVerifier } from './turnstile.ts';
 
-export const createApp = (config: Config, scanner: ReceiptScanner) =>
+export const createApp = (
+  config: Config,
+  scanner: ReceiptScanner,
+  verifyTurnstile: TurnstileVerifier | undefined = createTurnstileVerifier({
+    secretKey: config.turnstileSecretKey,
+    hostnames: config.turnstileHostnames,
+    timeoutMs: config.turnstileTimeoutMs,
+  }),
+) =>
   new Elysia()
     .use(requestLogger(config))
     .use(cors({ origin: config.corsOrigins.map(corsOrigin) }))
@@ -21,5 +30,5 @@ export const createApp = (config: Config, scanner: ReceiptScanner) =>
         generator: (request, server) => clientIp(request, server, config.trustProxy),
       }),
     )
-    .use(receiptRoutes(config, scanner))
+    .use(receiptRoutes(config, scanner, verifyTurnstile))
     .use(mcpRoutes(config, scanner));

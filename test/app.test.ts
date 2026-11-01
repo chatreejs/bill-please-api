@@ -6,7 +6,8 @@ import { configureLogger } from '../src/logger.ts';
 import { clientIp } from '../src/request-logger.ts';
 import type { ReceiptScanner } from '../src/scanners/index.ts';
 
-const testConfig = { ...config, rateLimitPerMinute: 1000, maxImageBytes: 1024 };
+// Bun loads .env into tests, so turn Turnstile off here; test/turnstile.test.ts covers it
+const testConfig = { ...config, rateLimitPerMinute: 1000, maxImageBytes: 1024, turnstileSecretKey: undefined };
 const stubScanner: ReceiptScanner = {
   scan: async () => ({ items: [{ name: 'Pad Thai', quantity: 2, price: 120, servicePercentage: 10, vatPercentage: 7 }] }),
 };

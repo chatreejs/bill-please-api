@@ -20,7 +20,7 @@ This is the backend for [bill-please](../bill-please), a client-only React PWA t
 
 | Endpoint                  | Protocol                                   | Consumer                                                                  |
 | ------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
-| `POST /api/receipts/scan` | REST, `multipart/form-data`, field `image` | bill-please web                                                           |
+| `POST /api/receipts/scan` | REST, `multipart/form-data`, fields `image` and `cf-turnstile-response` | bill-please web                              |
 | `/mcp`                    | MCP Streamable HTTP, stateless             | AI clients such as Claude, ChatGPT and Cursor                             |
 | `GET /health`             | REST                                       | Docker healthcheck, and bill-please web to enable the "Add from bill" button |
 
@@ -44,12 +44,14 @@ src/
     extraction.ts     compact LLM output schema (zod), its JSON schema and its GBNF grammar
     prompt.ts         system prompt with one short example
     postprocess.ts    toReceiptItems (compact output to the contract), resolveRates and reconcile (vs printed total)
-  routes/receipts.ts  REST scan route: 415 for a bad mime type, 413 for size, 502 for a scanner failure
+  turnstile.ts        createTurnstileVerifier(): Cloudflare siteverify check, undefined without a secret key
+  routes/receipts.ts  REST scan route: 403/503 for Turnstile, 415 for a bad mime type, 413 for size, 502 for a scanner failure
   mcp/
     server.ts         createMcpServer() registers the tool `scan_receipt`
     route.ts          `/mcp` route using WebStandardStreamableHTTPServerTransport
 test/app.test.ts      tests through app.handle(new Request(...)), without a real port
 test/scanner.test.ts  OCR and LLM scanner with a stub OCR client and extractor, no network
+test/turnstile.test.ts Turnstile on the scan route with a stub siteverify fetch, no network
 ```
 
 Key points:
@@ -73,6 +75,7 @@ Key points:
   - The access log record has the message `METHOD path status Nms` and the fields `http: { method, path, status, durationMs }`, `clientIp` and `userAgent`. 2xx and 3xx log at INFO, 4xx at WARN and 5xx at ERROR. `/health` from infra probes (User-Agent `kube-probe/*` or `Wget/*`) logs only at DEBUG, and from the web at INFO.
   - `onRequest` resolves the client IP, because Bun can't see the socket after the response.
   - Never log image bytes or secrets. Tests capture output with `configureLogger({ write })`.
+- **Turnstile.** `POST /api/receipts/scan` checks the single-use `cf-turnstile-response` token from bill-please web with Cloudflare's siteverify before any OCR or LLM work. It sends the client IP from `clientIp()` as `remoteip`. It answers 403 when the token is missing or rejected, the action isn't `receipt_scan`, or the hostname isn't in `TURNSTILE_HOSTNAMES`, and 503 when siteverify can't be reached (fail closed). Results from Cloudflare's test secret keys (`metadata.result_with_testing_key`) skip the action and hostname checks, because they always answer hostname `example.com` and no action. Without `TURNSTILE_SECRET_KEY` the check is off, like the web without `VITE_APP_TURNSTILE_SITE_KEY`. `createApp` takes the verifier as an optional third argument so tests can stub `fetch`. `/mcp` has no Turnstile, because AI clients can't run the widget; only the rate limit covers it.
 - **Rate limiting.** It uses `elysia-rate-limit` v4. v5 needs Elysia 2, which is still in beta, so stay on Elysia 1.4. The limit is in memory per process and skips `/health`. When `TRUST_PROXY=true`, the client IP comes from `CF-Connecting-IP`, then the first `X-Forwarded-For` entry. Traffic arrives through a Cloudflare tunnel, and Traefik replaces `X-Forwarded-For` with the cloudflared pod IP, so only `CF-Connecting-IP` has the visitor IP.
 
 ## Contract with bill-please web (keep in sync)
@@ -121,6 +124,9 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 | `LLM_API_KEY` | | Bearer token, only for APIs that need one |
 | `LLM_REASONING_EFFORT` | `none` | Sent as `reasoning_effort`. `none` turns off reasoning in thinking models such as Gemma 4, which was 5 to 20 times slower with reasoning and no more accurate. Leave it empty for APIs that reject the field |
 | `LLM_OUTPUT_FORMAT` | `gbnf` | `gbnf` sends `extractionGrammar`, a compact GBNF grammar that only llama.cpp accepts. On the T400 it cut the average output from 164 to 129 tokens. Set `json_schema` for any other OpenAI compatible API |
+| `TURNSTILE_SECRET_KEY` | | Cloudflare Turnstile secret key. Empty turns the check off. For local tests use Cloudflare's test secrets `1x0000000000000000000000000000000AA` (passes) or `2x0000000000000000000000000000000AA` (fails) |
+| `TURNSTILE_HOSTNAMES` | | Comma-separated hostnames a token must come from, for example `bill-please.chatree.dev`. Empty accepts any hostname on the widget |
+| `TURNSTILE_TIMEOUT_MS` | `10000` | Timeout for the siteverify call |
 | `LOG_LEVEL` | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF` |
 
 ## Deployment
@@ -148,7 +154,7 @@ CI is Jenkins only. SonarQube covers static analysis, so there is no GitHub Acti
 
 ## Status and roadmap
 
-Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, JSON logging with request ids, graceful SIGTERM shutdown, tests (42 passing), the Dockerfile and the web integration.
+Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, tests (51 passing), the Dockerfile and the web integration.
 
 Likely next steps:
 

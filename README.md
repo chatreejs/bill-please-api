@@ -70,6 +70,15 @@ bun dev'
 To replace the scanner, implement the `ReceiptScanner` interface in
 `src/scanners/types.ts` and return it from `createScanner` in `src/scanners/index.ts`.
 
+## Turnstile
+
+`POST /api/receipts/scan` can require a Cloudflare Turnstile token, sent by
+bill-please web as the `cf-turnstile-response` form field. Set
+`TURNSTILE_SECRET_KEY` to the widget's secret key to turn the check on, and
+`TURNSTILE_HOSTNAMES` (for example `bill-please.chatree.dev`) to accept tokens
+only from those sites. Without a secret key the check is off. The server answers
+403 for a missing or rejected token and 503 when Cloudflare can't be reached.
+
 ## Logging
 
 Logs are JSON lines, one object per record, for Loki or any log collector:
