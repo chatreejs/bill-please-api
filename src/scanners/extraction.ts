@@ -1,14 +1,17 @@
 import * as z from 'zod';
 
+import { ITEM_CATEGORIES } from '../schemas/receipt.ts';
+
 /**
  * What the LLM returns. It is smaller than the client contract to save tokens,
  * because generation speed is the bottleneck on the T400. `toReceiptItems` maps it.
  *
- * Each item is [name, quantity, line amount as printed]. Service charge and VAT are
+ * Each item is [name, quantity, line amount as printed, category]. The name has OCR errors
+ * fixed. Service charge and VAT are
  * receipt level, and `total` is the printed grand total, used only to check the result.
  */
 export const ExtractionSchema = z.object({
-  items: z.array(z.tuple([z.string(), z.number(), z.number()])),
+  items: z.array(z.tuple([z.string(), z.number(), z.number(), z.enum(ITEM_CATEGORIES)])),
   servicePercent: z.number(),
   vatPercent: z.number(),
   vatIncluded: z.boolean(),
@@ -44,6 +47,7 @@ export const extractionJsonSchema = dropBooleanItems(z.toJSONSchema(ExtractionSc
  * Keep the keys in ExtractionSchema order.
  */
 export const extractionGrammar = String.raw`root ::= "{\"items\":[" (item ("," item)*)? "],\"servicePercent\":" num ",\"vatPercent\":" num ",\"vatIncluded\":" ("true" | "false") ",\"total\":" (num | "null") "}"
-item ::= "[" str "," num "," num "]"
+item ::= "[" str "," num "," num "," category "]"
+category ::= ${ITEM_CATEGORIES.map((category) => JSON.stringify(JSON.stringify(category))).join(' | ')}
 str ::= "\"" ([^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}))* "\""
 num ::= "-"? ("0" | [1-9] [0-9]{0,6}) ("." [0-9] [0-9]?)?`;

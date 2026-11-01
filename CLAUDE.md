@@ -59,7 +59,7 @@ Key points:
 - **Dependency injection.** `createApp(config, scanner)` takes the scanner, so tests pass a stub scanner or a broken one. New routes follow the same `xxxRoutes(config, scanner)` plugin pattern.
 - **Contract validation.** Always call the scanner through `scanReceiptImage(scanner, image)`. It runs `zod.parse` on the scanner output, so a misbehaving AI model can never return malformed items. The REST route turns the error into a 502, and MCP returns `isError`.
 - **Scanner.** `OcrLlmReceiptScanner` is the only scanner. It sends the photo to bill-please-ocr and only the OCR text to the LLM.
-  - The LLM returns a compact shape to save tokens: items as `[name, quantity, line amount]`, plus receipt-level `servicePercent`, `vatPercent`, `vatIncluded` and the printed `total`. `toReceiptItems` divides the amount by the quantity and puts the receipt rates on every item, discounts included, so the web total equals the receipt total.
+  - The LLM returns a compact shape to save tokens: items as `[name, quantity, line amount, category]`, plus receipt-level `servicePercent`, `vatPercent`, `vatIncluded` and the printed `total`. `toReceiptItems` divides the amount by the quantity and puts the receipt rates on every item, discounts included, so the web total equals the receipt total.
   - A VAT-inclusive receipt keeps its printed prices and gets no `vatPercentage`. This follows the recommendation in the local docs. The user hasn't confirmed it yet.
   - Small models misread the receipt-level rates. They read a VAT-inclusive receipt that prints a pre-VAT amount and a VAT line as VAT on top (bill-4 in the ocr fixtures), and Qwen3 4B returns no rate for "TAX 6%" (bill-2). When the items don't add up to the printed total, `resolveRates` tries the service and tax rates printed in the OCR text, with VAT on top and included, and keeps the first reading that matches. In the local benchmark every model got `vatIncluded` wrong on bill-4 or bill-2 in all 3 runs, so in practice this check decides.
   - `toReceiptItems` moves a quantity column the model left in the name ("4.00 F1.Water") into the quantity.
@@ -90,7 +90,8 @@ Key points:
       "quantity": 2,
       "price": 120,
       "servicePercentage": 10,
-      "vatPercentage": 7
+      "vatPercentage": 7,
+      "category": "food"
     },
     { "name": "Member Discount", "quantity": 1, "price": -200 }
   ]
@@ -98,6 +99,8 @@ Key points:
 ```
 
 - `price` is the unit price before service charge and VAT. It can be negative for discounts.
+- `name` is the printed name with OCR errors fixed by the LLM. It keeps the receipt's language and menu codes.
+- `category` is optional, one of `food`, `drink`, `alcohol`, `dessert` or `other` (`ITEM_CATEGORIES`). Discounts have none. bill-please web doesn't read it yet.
 - `servicePercentage` and `vatPercentage` are per item, not per bill. That is a user decision. Both are optional and default to 0.
 - The web converts items with `receiptItemToBillItem` in `../bill-please/src/utils/bill.util.ts`. Service is price × quantity × service %, and VAT is (price × quantity + service) × VAT %. Its manual item form uses the same formula.
 - The web also re-normalizes responses with `normalizeReceiptItems` and drops items without a name or price.
@@ -154,7 +157,7 @@ CI is Jenkins only. SonarQube covers static analysis, so there is no GitHub Acti
 
 ## Status and roadmap
 
-Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, tests (51 passing), the Dockerfile and the web integration.
+Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, tests (52 passing), the Dockerfile and the web integration.
 
 Likely next steps:
 

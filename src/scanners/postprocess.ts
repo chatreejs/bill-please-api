@@ -34,12 +34,13 @@ const splitLeadingQuantity = (name: string, quantity: number): [string, number] 
  * Maps the LLM output to the client contract. The receipt-level service charge and
  * VAT go on every item, discounts included, so the web total equals the receipt total.
  * A VAT-inclusive receipt keeps its printed prices and gets no VAT percentage.
+ * Every item except a discount keeps the model's category.
  */
 export const toReceiptItems = (extraction: Extraction): ReceiptItem[] => {
   const servicePercentage = percent(extraction.servicePercent);
   const vatPercentage = extraction.vatIncluded ? 0 : percent(extraction.vatPercent);
 
-  return extraction.items.flatMap(([rawName, rawQuantity, amount]) => {
+  return extraction.items.flatMap(([rawName, rawQuantity, amount, category]) => {
     const [name, quantity] = splitLeadingQuantity(
       rawName.trim(),
       Number.isFinite(rawQuantity) && rawQuantity > 0 ? rawQuantity : 1,
@@ -55,6 +56,8 @@ export const toReceiptItems = (extraction: Extraction): ReceiptItem[] => {
         price: round2(amount / unitQuantity),
         ...(servicePercentage ? { servicePercentage } : {}),
         ...(vatPercentage ? { vatPercentage } : {}),
+        // A discount isn't an item someone ordered, so it gets no category
+        ...(amount > 0 ? { category } : {}),
       },
     ];
   });

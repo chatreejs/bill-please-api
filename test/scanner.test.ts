@@ -36,8 +36,8 @@ const ocrResult = (text: string, confidence = 0.95): OcrResult => ({
 
 const extraction: Extraction = {
   items: [
-    ['ผัดไทยกุ้งสด', 2, 240],
-    ['ส่วนลดสมาชิก', 1, -100],
+    ['ผัดไทยกุ้งสด', 2, 240, 'food'],
+    ['ส่วนลดสมาชิก', 1, -100, 'other'],
   ],
   servicePercent: 10,
   vatPercent: 7,
@@ -61,24 +61,24 @@ const image = { data: new Uint8Array([1]), mimeType: 'image/jpeg' as const };
 describe('toReceiptItems', () => {
   it('turns line amounts into unit prices and applies receipt rates to every item', () => {
     expect(toReceiptItems(extraction)).toEqual([
-      { name: 'ผัดไทยกุ้งสด', quantity: 2, price: 120, servicePercentage: 10, vatPercentage: 7 },
+      { name: 'ผัดไทยกุ้งสด', quantity: 2, price: 120, servicePercentage: 10, vatPercentage: 7, category: 'food' },
       { name: 'ส่วนลดสมาชิก', quantity: 1, price: -100, servicePercentage: 10, vatPercentage: 7 },
     ]);
   });
 
   it('leaves out VAT when prices already include it', () => {
     const items = toReceiptItems({ ...extraction, servicePercent: 0, vatIncluded: true });
-    expect(items[0]).toEqual({ name: 'ผัดไทยกุ้งสด', quantity: 2, price: 120 });
+    expect(items[0]).toEqual({ name: 'ผัดไทยกุ้งสด', quantity: 2, price: 120, category: 'food' });
   });
 
   it('fixes fractional rates, empty names, zero amounts and bad quantities', () => {
     const items = toReceiptItems({
       items: [
-        ['  Tea ', 0, 45],
-        ['', 1, 10],
-        ['Free water', 1, 0],
-        ['Coupon', 2, -50],
-        ['Rice', 3, 100],
+        ['  Tea ', 0, 45, 'drink'],
+        ['', 1, 10, 'food'],
+        ['Free water', 1, 0, 'drink'],
+        ['Coupon', 2, -50, 'other'],
+        ['Rice', 3, 100, 'food'],
       ],
       servicePercent: 0.1,
       vatPercent: 0.07,
@@ -86,9 +86,9 @@ describe('toReceiptItems', () => {
       total: null,
     });
     expect(items).toEqual([
-      { name: 'Tea', quantity: 1, price: 45, servicePercentage: 10, vatPercentage: 7 },
+      { name: 'Tea', quantity: 1, price: 45, servicePercentage: 10, vatPercentage: 7, category: 'drink' },
       { name: 'Coupon', quantity: 1, price: -50, servicePercentage: 10, vatPercentage: 7 },
-      { name: 'Rice', quantity: 3, price: 33.33, servicePercentage: 10, vatPercentage: 7 },
+      { name: 'Rice', quantity: 3, price: 33.33, servicePercentage: 10, vatPercentage: 7, category: 'food' },
     ]);
   });
 
@@ -96,11 +96,11 @@ describe('toReceiptItems', () => {
     const items = toReceiptItems({
       ...extraction,
       items: [
-        ['4.00 F1.Water', 4, 120],
-        ['2.00 I11.Squid', 1, 590],
-        ['2 Pad Thai', 2, 240],
-        ['3 Cheese Pizza', 1, 300],
-        ['ไข่มะตูม 1ฟอง', 1, 25],
+        ['4.00 F1.Water', 4, 120, 'drink'],
+        ['2.00 I11.Squid', 1, 590, 'food'],
+        ['2 Pad Thai', 2, 240, 'food'],
+        ['3 Cheese Pizza', 1, 300, 'food'],
+        ['ไข่มะตูม 1ฟอง', 1, 25, 'food'],
       ],
       servicePercent: 0,
       vatPercent: 0,
@@ -129,8 +129,8 @@ describe('resolveRates', () => {
   const bill4Text = 'ราคารวม: 315.89\nVAT 7% 22.11\nราคารวมสุทธิ: 338.00';
   const vatInPrices: Extraction = {
     items: [
-      ['สเต๊กไก่ซอสแจ่วปลาร้า (P)', 1, 129],
-      ['สเต๊กไก่สไปซี่', 1, 209],
+      ['สเต๊กไก่ซอสแจ่วปลาร้า (P)', 1, 129, 'food'],
+      ['สเต๊กไก่สไปซี่', 1, 209, 'food'],
     ],
     servicePercent: 0,
     vatPercent: 7,
@@ -141,7 +141,12 @@ describe('resolveRates', () => {
   it('treats VAT as included when only that matches the printed total', () => {
     const resolved = resolveRates(vatInPrices, bill4Text);
     expect(resolved.vatIncluded).toBe(true);
-    expect(toReceiptItems(resolved)[0]).toEqual({ name: 'สเต๊กไก่ซอสแจ่วปลาร้า (P)', quantity: 1, price: 129 });
+    expect(toReceiptItems(resolved)[0]).toEqual({
+      name: 'สเต๊กไก่ซอสแจ่วปลาร้า (P)',
+      quantity: 1,
+      price: 129,
+      category: 'food',
+    });
   });
 
   it('treats VAT as added when only that matches the printed total', () => {
@@ -152,9 +157,9 @@ describe('resolveRates', () => {
     // bill-2: SUBTOTAL $103.35, TAX 6% $6.20, TOTAL $109.55
     const bill2: Extraction = {
       items: [
-        ['Pasta with cheese', 2, 71],
-        ['Chicken Pitzza', 1, 24.55],
-        ['Drinks', 4, 7.8],
+        ['Pasta with cheese', 2, 71, 'food'],
+        ['Chicken Pitzza', 1, 24.55, 'food'],
+        ['Drinks', 4, 7.8, 'drink'],
       ],
       servicePercent: 0,
       vatPercent: 0,
@@ -184,6 +189,11 @@ describe('resolveRates', () => {
 describe('extraction JSON schema', () => {
   it('has no boolean subschemas, which llama.cpp rejects', () => {
     expect(JSON.stringify(extractionJsonSchema)).not.toContain('"items":false');
+  });
+
+  it('limits the category to the contract values in both output formats', () => {
+    expect(JSON.stringify(extractionJsonSchema)).toContain('"enum":["food","drink","alcohol","dessert","other"]');
+    expect(extractionGrammar).toContain('category ::= "\\"food\\"" | "\\"drink\\""');
   });
 });
 

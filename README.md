@@ -51,13 +51,15 @@ MCP returns it as `structuredContent`.
 ```json
 {
   "items": [
-    { "name": "Pad Thai", "quantity": 2, "price": 120, "servicePercentage": 10, "vatPercentage": 7 },
+    { "name": "Pad Thai", "quantity": 2, "price": 120, "servicePercentage": 10, "vatPercentage": 7, "category": "food" },
     { "name": "Member Discount", "quantity": 1, "price": -200 }
   ]
 }
 ```
 
-`price` is the unit price before service charge and VAT. The schema is in
+`price` is the unit price before service charge and VAT. `name` has OCR errors
+fixed, and `category` is one of `food`, `drink`, `alcohol`, `dessert` or `other`.
+Discounts have no category. The schema is in
 `src/schemas/receipt.ts`, and the server checks every scanner result against it.
 
 ## Development
