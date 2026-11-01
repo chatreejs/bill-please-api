@@ -318,7 +318,7 @@ describe('OcrLlmReceiptScanner', () => {
 
   it('answers 422 on REST and a friendly tool error on MCP', async () => {
     const app = createApp(
-      { ...config, rateLimitPerMinute: 1000 },
+      { ...config, rateLimitPerMinute: 1000, turnstileSecretKey: undefined },
       new OcrLlmReceiptScanner(stubOcr(ocrResult('')), new StubExtractor(extraction), 0.6),
     );
     const form = new FormData();
