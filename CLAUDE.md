@@ -131,7 +131,7 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 | `LLM_URL`, `LLM_MODEL`, `LLM_TIMEOUT_MS` | `http://localhost:8080/v1`, `qwen3-4b-instruct-2507`, `45000` | Any OpenAI compatible API |
 | `LLM_API_KEY` | | Bearer token, only for APIs that need one |
 | `LLM_MAX_CONCURRENT` | `1` | Scans sent to the LLM at the same time. The rest wait in a FIFO queue. Match the llm-server's llama.cpp `--parallel` |
-| `LLM_QUEUE_MAX` | `10` | Scans allowed to wait for the LLM. More answer 503. `0` rejects every scan while the LLM is busy |
+| `LLM_QUEUE_MAX` | `1` | Scans allowed to wait for the LLM. More answer 503, and the web shows the busy tooltip. `0` rejects every scan while the LLM is busy. 1 fits the T400: a scan takes about 12 s (35 s for a big receipt), so a 2nd waiting scan often passes `LLM_QUEUE_TIMEOUT_MS` and a 3rd always does. Rule of thumb: queue timeout ÷ scan time + 1 |
 | `LLM_QUEUE_TIMEOUT_MS` | `20000` | Longest wait for an LLM slot before 503. `0` waits until the client gives up. The web's 60 s Axios timeout covers OCR, the wait and the LLM call together |
 | `LLM_REASONING_EFFORT` | `none` | Sent as `reasoning_effort`. `none` turns off reasoning in thinking models such as Gemma 4, which was 5 to 20 times slower with reasoning and no more accurate. Leave it empty for APIs that reject the field |
 | `LLM_OUTPUT_FORMAT` | `gbnf` | `gbnf` sends `extractionGrammar`, a compact GBNF grammar that only llama.cpp accepts. On the T400 it cut the average output from 164 to 129 tokens. Set `json_schema` for any other OpenAI compatible API |

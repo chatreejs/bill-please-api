@@ -34,7 +34,7 @@ export const config = {
   // Scans sent to the LLM at the same time. Match llama.cpp --parallel of the llm-server (1 today)
   llmMaxConcurrent: Math.max(1, int(Bun.env.LLM_MAX_CONCURRENT, 1)),
   // Scans allowed to wait for a free LLM slot. More answer 503. 0 rejects every scan while the LLM is busy
-  llmQueueMax: Math.max(0, int(Bun.env.LLM_QUEUE_MAX, 10)),
+  llmQueueMax: Math.max(0, int(Bun.env.LLM_QUEUE_MAX, 1)),
   // Longest wait for an LLM slot before answering 503. 0 waits until the client gives up
   llmQueueTimeoutMs: Math.max(0, int(Bun.env.LLM_QUEUE_TIMEOUT_MS, 20000)),
   // Sent as reasoning_effort. none stops thinking models from reasoning before they answer.
