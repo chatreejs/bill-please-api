@@ -114,7 +114,7 @@ describe('busy scanner responses', () => {
     const res = await app.handle(new Request('http://localhost/api/receipts/scan', { method: 'POST', body: form }));
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('15');
-    expect(await res.json()).toEqual({ error: 'The receipt scanner is busy, try again shortly' });
+    expect(await res.json()).toEqual({ error: 'The receipt scanner is busy, try again shortly', code: 'scanner_busy' });
   });
 
   it('returns isError from the MCP tool', async () => {

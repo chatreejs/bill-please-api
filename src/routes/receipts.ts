@@ -74,7 +74,8 @@ export const receiptRoutes = (
         }
         if (error instanceof ScannerBusyError) {
           set.headers['retry-after'] = String(RETRY_AFTER_SECONDS);
-          return status(503, { error: 'The receipt scanner is busy, try again shortly' });
+          // The code field tells this 503 apart from the Turnstile 503. The web can't read Retry-After cross-origin
+          return status(503, { error: 'The receipt scanner is busy, try again shortly', code: 'scanner_busy' });
         }
         if (request.signal.aborted) {
           log.warn('Receipt scan stopped, because the client went away');
