@@ -108,6 +108,75 @@ const streamScan = (
   });
 };
 
+// How long EventSource waits before it reconnects after the status stream drops
+const STATUS_RETRY_MS = 5000;
+
+/** The body of GET /api/receipts/status, and of each `status` event in its stream */
+const statusBody = (scanner: ReceiptScanner) => {
+  const status = scanner.status?.();
+  return { status: 'ok' as const, busy: status?.busy ?? false, ...(status ? { queue: status.queue } : {}) };
+};
+
+/**
+ * Answers 200 with Server-Sent Events: one `status` event now, then one each time the
+ * queue state changes, until the client goes away. A ping every HEARTBEAT_MS keeps
+ * Bun's idle timeout and proxies from closing the stream.
+ */
+const streamStatus = (scanner: ReceiptScanner, requestSignal: AbortSignal, headers: Record<string, unknown>) => {
+  const encoder = new TextEncoder();
+  let stop = () => {};
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      let last = '';
+      const write = (text: string) => {
+        if (!closed) controller.enqueue(encoder.encode(text));
+      };
+      const send = () => {
+        const data = JSON.stringify(statusBody(scanner));
+        // Send nothing when the status matches the last one sent
+        if (data === last) return;
+        last = data;
+        write(`event: status\ndata: ${data}\n\n`);
+      };
+
+      const heartbeat = setInterval(() => write(': ping\n\n'), HEARTBEAT_MS);
+      const unsubscribe = scanner.onStatusChange?.(send) ?? (() => {});
+      const onAbort = () => {
+        stop();
+        try {
+          controller.close();
+        } catch {
+          // The client already cancelled the stream
+        }
+      };
+      stop = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        unsubscribe();
+        requestSignal.removeEventListener('abort', onAbort);
+      };
+      requestSignal.addEventListener('abort', onAbort, { once: true });
+
+      write(`retry: ${STATUS_RETRY_MS}\n\n`);
+      send();
+    },
+    cancel() {
+      stop();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      ...(headers as Record<string, string>),
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+    },
+  });
+};
+
 const isSupportedImageType = (type: string): type is SupportedImageType =>
   (SUPPORTED_IMAGE_TYPES as readonly string[]).includes(type);
 
@@ -118,11 +187,13 @@ export const receiptRoutes = (
   verifyTurnstile?: TurnstileVerifier,
 ) =>
   new Elysia({ prefix: '/api/receipts' })
-    // bill-please web polls this every few seconds and disables "Add from bill" while busy
-    .get('/status', () => {
-      const status = scanner.status?.();
-      return { status: 'ok' as const, busy: status?.busy ?? false, ...(status ? { queue: status.queue } : {}) };
-    })
+    // bill-please web keeps a Server-Sent Events stream of this open and disables "Add from bill"
+    // while busy. Other clients, such as curl and older web builds, get one JSON body
+    .get('/status', ({ request, set }) =>
+      request.headers.get('accept')?.includes('text/event-stream')
+        ? streamStatus(scanner, request.signal, set.headers)
+        : statusBody(scanner),
+    )
     .post(
     '/scan',
     async ({ body, status, request, server, set }) => {

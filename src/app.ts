@@ -28,7 +28,7 @@ export const createApp = (
       rateLimit({
         duration: 60_000,
         max: config.rateLimitPerMinute,
-        // Every open web page polls these every few seconds
+        // Probes poll /health, and every open web page keeps a status stream open and reconnects when it drops
         skip: (request) => POLLED_PATHS.has(new URL(request.url).pathname),
         generator: (request, server) => clientIp(request, server, config.trustProxy),
       }),

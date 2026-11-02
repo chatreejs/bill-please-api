@@ -67,7 +67,7 @@ export const requestLogger = (config: Config) =>
       };
 
       // Infra probes call /health every few seconds, so they log at DEBUG. /health from the web logs at INFO.
-      // Every open web page polls /api/receipts/status every few seconds, so it logs at DEBUG too
+      // Every open web page keeps an /api/receipts/status stream open and reconnects it, so it logs at DEBUG too
       const isProbe = PROBE_USER_AGENT.test(userAgent);
       const isPoll = (path === '/health' && isProbe) || path === '/api/receipts/status';
       if (isPoll && status < 400) log.debug(message, fields);

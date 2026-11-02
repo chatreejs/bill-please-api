@@ -14,7 +14,7 @@ const log = getLogger('scanner');
 
 export { ScannerBusyError, UnreadableReceiptError } from './errors.ts';
 export type { ScanProgress } from './progress.ts';
-export type { ReceiptImage, ReceiptScanner, ScannerStatus, ScanOptions } from './types.ts';
+export type { ReceiptImage, ReceiptScanner, ScannerStatus, ScanOptions, StatusListener } from './types.ts';
 
 export const createScanner = (config: Config): ReceiptScanner =>
   new OcrLlmReceiptScanner(

@@ -179,3 +179,92 @@ describe('GET /api/receipts/status', () => {
     expect(await status(plain)).toEqual({ status: 'ok', busy: false });
   });
 });
+
+describe('GET /api/receipts/status as Server-Sent Events', () => {
+  const testConfig = { ...config, rateLimitPerMinute: 1, turnstileSecretKey: undefined };
+
+  /** Opens the stream and reads its `status` events as they arrive */
+  const openStream = async (scanner: ReceiptScanner) => {
+    const abort = new AbortController();
+    const res = await createApp(testConfig, scanner).handle(
+      new Request('http://localhost/api/receipts/status', {
+        headers: { accept: 'text/event-stream' },
+        signal: abort.signal,
+      }),
+    );
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    const next = async (): Promise<unknown> => {
+      for (;;) {
+        const end = buffer.indexOf('\n\n');
+        if (end !== -1) {
+          const block = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const data = block.split('\n').find((line) => line.startsWith('data: '));
+          if (block.startsWith('event: status') && data) return JSON.parse(data.slice(6));
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error('The status stream ended');
+        buffer += value;
+      }
+    };
+    return { res, next, close: () => reader.cancel() };
+  };
+
+  it('sends the status now, then each time the queue changes', async () => {
+    const limiter = new ConcurrencyLimiter({ maxConcurrent: 1, maxQueue: 1, timeoutMs: 0 });
+    const stream = await openStream({
+      scan: async () => ({ items: [] }),
+      status: () => limiter.status(),
+      onStatusChange: (listener) => limiter.onStatusChange(listener),
+    });
+    expect(stream.res.headers.get('content-type')).toBe('text/event-stream');
+    expect(await stream.next()).toEqual({
+      status: 'ok',
+      busy: false,
+      queue: { active: 0, waiting: 0, maxConcurrent: 1, maxQueue: 1 },
+    });
+
+    const g = gate();
+    const running = limiter.run(() => g.done);
+    expect(await stream.next()).toMatchObject({ busy: false, queue: { active: 1, waiting: 0 } });
+    const waiting = limiter.run(async () => {});
+    expect(await stream.next()).toMatchObject({ busy: true, queue: { active: 1, waiting: 1 } });
+
+    g.release();
+    await Promise.all([running, waiting]);
+    // The waiting task took the slot, then finished
+    expect(await stream.next()).toMatchObject({ busy: false, queue: { active: 1, waiting: 0 } });
+    expect(await stream.next()).toMatchObject({ busy: false, queue: { active: 0, waiting: 0 } });
+    await stream.close();
+  });
+
+  it('stops listening when the client goes away', async () => {
+    const limiter = new ConcurrencyLimiter({ maxConcurrent: 1, maxQueue: 1, timeoutMs: 0 });
+    let listeners = 0;
+    const stream = await openStream({
+      scan: async () => ({ items: [] }),
+      status: () => limiter.status(),
+      onStatusChange: (listener) => {
+        listeners++;
+        const stop = limiter.onStatusChange(listener);
+        return () => {
+          listeners--;
+          stop();
+        };
+      },
+    });
+    await stream.next();
+    expect(listeners).toBe(1);
+    await stream.close();
+    await tick();
+    expect(listeners).toBe(0);
+  });
+
+  it('sends one not busy status for a scanner without a queue', async () => {
+    const stream = await openStream({ scan: async () => ({ items: [] }) });
+    expect(await stream.next()).toEqual({ status: 'ok', busy: false });
+    await stream.close();
+  });
+});

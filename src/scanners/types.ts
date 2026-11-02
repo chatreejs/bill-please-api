@@ -13,6 +13,8 @@ export interface ScannerStatus {
   queue: { active: number; waiting: number; maxConcurrent: number; maxQueue: number };
 }
 
+export type StatusListener = (status: ScannerStatus) => void;
+
 export interface ScanOptions {
   /** Aborts the scan, including its place in the LLM queue, when the client goes away */
   signal?: AbortSignal;
@@ -25,4 +27,6 @@ export interface ReceiptScanner {
   scan(image: ReceiptImage, options?: ScanOptions): Promise<ReceiptScanResult>;
   /** Queue state, undefined when the scanner has no queue */
   status?(): ScannerStatus | undefined;
+  /** Calls listener each time the queue state changes. Returns a function that stops it */
+  onStatusChange?(listener: StatusListener): () => void;
 }

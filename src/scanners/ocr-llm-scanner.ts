@@ -1,7 +1,7 @@
 import { getLogger } from '../logger.ts';
 import type { ReceiptScanResult } from '../schemas/receipt.ts';
 import { UnreadableReceiptError } from './errors.ts';
-import type { ReceiptImage, ReceiptScanner, ScannerStatus, ScanOptions } from './types.ts';
+import type { ReceiptImage, ReceiptScanner, ScannerStatus, ScanOptions, StatusListener } from './types.ts';
 import type { ReceiptExtractor } from './llm-client.ts';
 import { meanConfidence, type OcrClient } from './ocr-client.ts';
 import { reconcile, resolveRates, toReceiptItems } from './postprocess.ts';
@@ -22,6 +22,10 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
 
   status(): ScannerStatus | undefined {
     return this.extractor.status?.();
+  }
+
+  onStatusChange(listener: StatusListener): () => void {
+    return this.extractor.onStatusChange?.(listener) ?? (() => {});
   }
 
   async scan(image: ReceiptImage, { signal, onProgress }: ScanOptions = {}): Promise<ReceiptScanResult> {

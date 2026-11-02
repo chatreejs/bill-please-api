@@ -2,7 +2,7 @@ import { getLogger } from '../logger.ts';
 import { ScannerBusyError } from './errors.ts';
 import type { Extraction } from './extraction.ts';
 import type { ExtractOptions, ReceiptExtractor } from './llm-client.ts';
-import type { ScannerStatus } from './types.ts';
+import type { ScannerStatus, StatusListener } from './types.ts';
 
 const log = getLogger('scanner.queue');
 
@@ -28,6 +28,7 @@ export class ConcurrencyLimiter {
   private active = 0;
   private readonly waiting: Waiter[] = [];
   private readonly options: QueueOptions;
+  private readonly listeners = new Set<StatusListener>();
 
   constructor(options: QueueOptions) {
     this.options = { ...options, maxConcurrent: Math.max(1, options.maxConcurrent), maxQueue: Math.max(0, options.maxQueue) };
@@ -46,6 +47,24 @@ export class ConcurrencyLimiter {
     };
   }
 
+  /** Calls listener with the new status each time a task starts, queues, leaves the queue or finishes */
+  onStatusChange(listener: StatusListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    if (this.listeners.size === 0) return;
+    const status = this.status();
+    for (const listener of this.listeners) {
+      try {
+        listener(status);
+      } catch (error) {
+        log.error('A queue status listener failed', error);
+      }
+    }
+  }
+
   /** onQueued gets the task's position when it has to wait. Position 1 is next */
   async run<T>(task: () => Promise<T>, signal?: AbortSignal, onQueued?: (position: number) => void): Promise<T> {
     await this.acquire(signal, onQueued);
@@ -60,6 +79,7 @@ export class ConcurrencyLimiter {
     signal?.throwIfAborted();
     if (this.active < this.options.maxConcurrent && this.waiting.length === 0) {
       this.active++;
+      this.notify();
       return Promise.resolve();
     }
     if (this.waiting.length >= this.options.maxQueue) {
@@ -88,10 +108,12 @@ export class ConcurrencyLimiter {
           this.active++;
           const waitMs = Math.round(performance.now() - startedAt);
           log.info(`Got an LLM slot after waiting ${waitMs}ms`, { queue: { ...this.stats, waitMs } });
+          this.notify();
           resolve();
         },
         fail: (error) => {
           cleanup();
+          this.notify();
           reject(error);
         },
       };
@@ -101,6 +123,7 @@ export class ConcurrencyLimiter {
       };
 
       this.waiting.push(waiter);
+      this.notify();
       signal?.addEventListener('abort', onAbort, { once: true });
       if (this.options.timeoutMs > 0) {
         timer = setTimeout(() => {
@@ -115,7 +138,9 @@ export class ConcurrencyLimiter {
 
   private release() {
     this.active--;
-    this.waiting[0]?.start();
+    // start() notifies when a waiting task takes the slot
+    if (this.waiting.length > 0) this.waiting[0]!.start();
+    else this.notify();
   }
 }
 
@@ -128,6 +153,10 @@ export class QueuedExtractor implements ReceiptExtractor {
 
   status(): ScannerStatus {
     return this.limiter.status();
+  }
+
+  onStatusChange(listener: StatusListener): () => void {
+    return this.limiter.onStatusChange(listener);
   }
 
   extract(ocrText: string, options: ExtractOptions = {}): Promise<Extraction> {

@@ -4,7 +4,7 @@ import { getLogger } from '../logger.ts';
 import { type Extraction, ExtractionSchema, extractionGrammar, extractionJsonSchema } from './extraction.ts';
 import { type ExtractionEvent, ItemCounter } from './progress.ts';
 import { SYSTEM_PROMPT, userPrompt } from './prompt.ts';
-import type { ScannerStatus } from './types.ts';
+import type { ScannerStatus, StatusListener } from './types.ts';
 
 const log = getLogger('scanner.llm');
 
@@ -41,6 +41,8 @@ export interface ReceiptExtractor {
   extract(ocrText: string, options?: ExtractOptions): Promise<Extraction>;
   /** Queue state, when the extractor has a queue */
   status?(): ScannerStatus;
+  /** Calls listener each time the queue state changes, when the extractor has a queue */
+  onStatusChange?(listener: StatusListener): () => void;
 }
 
 /**
