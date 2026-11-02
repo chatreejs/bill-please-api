@@ -13,7 +13,7 @@ import type { ReceiptImage, ReceiptScanner } from './types.ts';
 const log = getLogger('scanner');
 
 export { ScannerBusyError, UnreadableReceiptError } from './errors.ts';
-export type { ReceiptImage, ReceiptScanner } from './types.ts';
+export type { ReceiptImage, ReceiptScanner, ScannerStatus } from './types.ts';
 
 export const createScanner = (config: Config): ReceiptScanner =>
   new OcrLlmReceiptScanner(

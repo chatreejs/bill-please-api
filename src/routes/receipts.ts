@@ -26,7 +26,13 @@ export const receiptRoutes = (
   scanner: ReceiptScanner,
   verifyTurnstile?: TurnstileVerifier,
 ) =>
-  new Elysia({ prefix: '/api/receipts' }).post(
+  new Elysia({ prefix: '/api/receipts' })
+    // bill-please web polls this every few seconds and disables "Add from bill" while busy
+    .get('/status', () => {
+      const status = scanner.status?.();
+      return { status: 'ok' as const, busy: status?.busy ?? false, ...(status ? { queue: status.queue } : {}) };
+    })
+    .post(
     '/scan',
     async ({ body, status, request, server, set }) => {
       const { image } = body;

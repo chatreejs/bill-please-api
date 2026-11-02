@@ -9,6 +9,8 @@ import { receiptRoutes } from './routes/receipts.ts';
 import type { ReceiptScanner } from './scanners/index.ts';
 import { createTurnstileVerifier, type TurnstileVerifier } from './turnstile.ts';
 
+const POLLED_PATHS = new Set(['/health', '/api/receipts/status']);
+
 export const createApp = (
   config: Config,
   scanner: ReceiptScanner,
@@ -26,7 +28,8 @@ export const createApp = (
       rateLimit({
         duration: 60_000,
         max: config.rateLimitPerMinute,
-        skip: (request) => new URL(request.url).pathname === '/health',
+        // Every open web page polls these every few seconds
+        skip: (request) => POLLED_PATHS.has(new URL(request.url).pathname),
         generator: (request, server) => clientIp(request, server, config.trustProxy),
       }),
     )

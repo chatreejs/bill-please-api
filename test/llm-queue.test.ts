@@ -138,3 +138,44 @@ describe('busy scanner responses', () => {
     expect(body.result.content[0]!.text).toContain('busy');
   });
 });
+
+describe('GET /api/receipts/status', () => {
+  const testConfig = { ...config, rateLimitPerMinute: 1, turnstileSecretKey: undefined };
+  const limiter = new ConcurrencyLimiter({ maxConcurrent: 1, maxQueue: 1, timeoutMs: 0 });
+  const queuedScanner: ReceiptScanner = {
+    scan: async () => ({ items: [] }),
+    status: () => limiter.status(),
+  };
+  const app = createApp(testConfig, queuedScanner);
+  const status = async (target = app) =>
+    (await target.handle(new Request('http://localhost/api/receipts/status'))).json();
+
+  it('reports not busy while a queue place is free, and busy once the queue is full', async () => {
+    expect(await status()).toEqual({
+      status: 'ok',
+      busy: false,
+      queue: { active: 0, waiting: 0, maxConcurrent: 1, maxQueue: 1 },
+    });
+
+    const g = gate();
+    const running = limiter.run(() => g.done);
+    const waiting = limiter.run(async () => {});
+    await tick();
+    expect(await status()).toMatchObject({ busy: true, queue: { active: 1, waiting: 1 } });
+
+    g.release();
+    await Promise.all([running, waiting]);
+    expect(await status()).toMatchObject({ busy: false, queue: { active: 0, waiting: 0 } });
+  });
+
+  it('skips the rate limit, because every open page polls it', async () => {
+    for (let i = 0; i < 3; i++) {
+      expect((await app.handle(new Request('http://localhost/api/receipts/status'))).status).toBe(200);
+    }
+  });
+
+  it('reports not busy for a scanner without a queue', async () => {
+    const plain = createApp(testConfig, { scan: async () => ({ items: [] }) });
+    expect(await status(plain)).toEqual({ status: 'ok', busy: false });
+  });
+});

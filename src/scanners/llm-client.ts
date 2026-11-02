@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { getLogger } from '../logger.ts';
 import { type Extraction, ExtractionSchema, extractionGrammar, extractionJsonSchema } from './extraction.ts';
 import { SYSTEM_PROMPT, userPrompt } from './prompt.ts';
+import type { ScannerStatus } from './types.ts';
 
 const log = getLogger('scanner.llm');
 
@@ -16,6 +17,8 @@ const ChatCompletionSchema = z.object({
 export interface ReceiptExtractor {
   /** signal aborts the call when the client goes away */
   extract(ocrText: string, signal?: AbortSignal): Promise<Extraction>;
+  /** Queue state, when the extractor has a queue */
+  status?(): ScannerStatus;
 }
 
 /**

@@ -2,6 +2,7 @@ import { getLogger } from '../logger.ts';
 import { ScannerBusyError } from './errors.ts';
 import type { Extraction } from './extraction.ts';
 import type { ReceiptExtractor } from './llm-client.ts';
+import type { ScannerStatus } from './types.ts';
 
 const log = getLogger('scanner.queue');
 
@@ -34,6 +35,15 @@ export class ConcurrencyLimiter {
 
   get stats() {
     return { active: this.active, waiting: this.waiting.length, maxConcurrent: this.options.maxConcurrent };
+  }
+
+  /** busy is true when a new task would be rejected now, because every slot and queue place is taken */
+  status(): ScannerStatus {
+    const { maxConcurrent, maxQueue } = this.options;
+    return {
+      busy: this.active >= maxConcurrent && this.waiting.length >= maxQueue,
+      queue: { active: this.active, waiting: this.waiting.length, maxConcurrent, maxQueue },
+    };
   }
 
   async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -113,6 +123,10 @@ export class QueuedExtractor implements ReceiptExtractor {
     private readonly extractor: ReceiptExtractor,
     readonly limiter: ConcurrencyLimiter,
   ) {}
+
+  status(): ScannerStatus {
+    return this.limiter.status();
+  }
 
   extract(ocrText: string, signal?: AbortSignal): Promise<Extraction> {
     return this.limiter.run(() => this.extractor.extract(ocrText, signal), signal);

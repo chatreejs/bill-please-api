@@ -66,9 +66,11 @@ export const requestLogger = (config: Config) =>
         userAgent: userAgent || undefined,
       };
 
-      // Infra probes hit /health every few seconds; web client polls stay visible
+      // Infra probes call /health every few seconds, so they log at DEBUG. /health from the web logs at INFO.
+      // Every open web page polls /api/receipts/status every few seconds, so it logs at DEBUG too
       const isProbe = PROBE_USER_AGENT.test(userAgent);
-      if (path === '/health' && status < 400 && isProbe) log.debug(message, fields);
+      const isPoll = (path === '/health' && isProbe) || path === '/api/receipts/status';
+      if (isPoll && status < 400) log.debug(message, fields);
       else if (status >= 500) log.error(message, fields);
       else if (status >= 400) log.warn(message, fields);
       else log.info(message, fields);
