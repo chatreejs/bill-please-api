@@ -3,7 +3,12 @@ import * as z from 'zod';
 
 import type { Config } from '../config.ts';
 import { getLogger } from '../logger.ts';
-import { type ReceiptScanner, scanReceiptImage, UnreadableReceiptError } from '../scanners/index.ts';
+import {
+  type ReceiptScanner,
+  ScannerBusyError,
+  scanReceiptImage,
+  UnreadableReceiptError,
+} from '../scanners/index.ts';
 import {
   ReceiptScanResultSchema,
   SUPPORTED_IMAGE_TYPES,
@@ -38,7 +43,7 @@ export const createMcpServer = (config: Config, scanner: ReceiptScanner) => {
       outputSchema: ReceiptScanResultSchema.shape,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    async ({ imageBase64, mimeType }) => {
+    async ({ imageBase64, mimeType }, extra) => {
       const data = Buffer.from(imageBase64, 'base64');
       if (data.length === 0) {
         log.warn('scan_receipt rejected: imageBase64 is not valid base64');
@@ -51,7 +56,7 @@ export const createMcpServer = (config: Config, scanner: ReceiptScanner) => {
 
       try {
         log.info('scan_receipt called', { image: { mimeType, bytes: data.length } });
-        const result = await scanReceiptImage(scanner, { data, mimeType });
+        const result = await scanReceiptImage(scanner, { data, mimeType }, extra.signal);
         return {
           structuredContent: result,
           content: [{ type: 'text', text: JSON.stringify(result) }],
@@ -60,6 +65,9 @@ export const createMcpServer = (config: Config, scanner: ReceiptScanner) => {
         if (error instanceof UnreadableReceiptError) {
           log.warn(`scan_receipt found no receipt text: ${error.message}`);
           return toolError('No receipt text found in the image. Try a sharper, well lit photo.');
+        }
+        if (error instanceof ScannerBusyError) {
+          return toolError('The receipt scanner is busy with other scans. Try again in about 15 seconds.');
         }
         log.error('scan_receipt failed', error);
         return toolError('Could not read the receipt');

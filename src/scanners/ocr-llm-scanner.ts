@@ -19,7 +19,7 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
     private readonly minMeanConfidence: number,
   ) {}
 
-  async scan(image: ReceiptImage): Promise<ReceiptScanResult> {
+  async scan(image: ReceiptImage, signal?: AbortSignal): Promise<ReceiptScanResult> {
     const ocr = await this.ocr.recognize(image);
     const confidence = meanConfidence(ocr.lines);
     // Skip the LLM call, which costs 10 s or more, when there is nothing to read
@@ -29,7 +29,7 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
       );
     }
 
-    const raw = await this.extractor.extract(ocr.text);
+    const raw = await this.extractor.extract(ocr.text, signal);
     const extraction = resolveRates(raw, ocr.text);
     if (extraction !== raw) {
       const { servicePercent, vatPercent, vatIncluded } = extraction;

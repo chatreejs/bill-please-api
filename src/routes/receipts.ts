@@ -3,11 +3,19 @@ import { Elysia, t } from 'elysia';
 import type { Config } from '../config.ts';
 import { getLogger } from '../logger.ts';
 import { clientIp } from '../request-logger.ts';
-import { type ReceiptScanner, scanReceiptImage, UnreadableReceiptError } from '../scanners/index.ts';
+import {
+  type ReceiptScanner,
+  ScannerBusyError,
+  scanReceiptImage,
+  UnreadableReceiptError,
+} from '../scanners/index.ts';
 import { SUPPORTED_IMAGE_TYPES, type SupportedImageType } from '../schemas/receipt.ts';
 import { RECEIPT_SCAN_ACTION, type TurnstileVerifier } from '../turnstile.ts';
 
 const log = getLogger('receipts.route');
+
+// One scan takes about this long on the T400
+const RETRY_AFTER_SECONDS = 15;
 
 const isSupportedImageType = (type: string): type is SupportedImageType =>
   (SUPPORTED_IMAGE_TYPES as readonly string[]).includes(type);
@@ -20,7 +28,7 @@ export const receiptRoutes = (
 ) =>
   new Elysia({ prefix: '/api/receipts' }).post(
     '/scan',
-    async ({ body, status, request, server }) => {
+    async ({ body, status, request, server, set }) => {
       const { image } = body;
       // Check Turnstile first, so a bot never reaches the paid OCR and LLM steps
       if (verifyTurnstile) {
@@ -48,14 +56,23 @@ export const receiptRoutes = (
 
       try {
         log.info('Received receipt image', { image: { mimeType: image.type, bytes: image.size } });
-        return await scanReceiptImage(scanner, {
-          data: new Uint8Array(await image.arrayBuffer()),
-          mimeType: image.type,
-        });
+        return await scanReceiptImage(
+          scanner,
+          { data: new Uint8Array(await image.arrayBuffer()), mimeType: image.type },
+          request.signal,
+        );
       } catch (error) {
         if (error instanceof UnreadableReceiptError) {
           log.warn(`Receipt unreadable: ${error.message}`);
           return status(422, { error: 'No receipt text found in the image' });
+        }
+        if (error instanceof ScannerBusyError) {
+          set.headers['retry-after'] = String(RETRY_AFTER_SECONDS);
+          return status(503, { error: 'The receipt scanner is busy, try again shortly' });
+        }
+        if (request.signal.aborted) {
+          log.warn('Receipt scan stopped, because the client went away');
+          return status(503, { error: 'Request aborted' });
         }
         log.error('Receipt scan failed', error);
         return status(502, { error: 'Could not read the receipt' });

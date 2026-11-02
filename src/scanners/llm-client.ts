@@ -14,7 +14,8 @@ const ChatCompletionSchema = z.object({
 });
 
 export interface ReceiptExtractor {
-  extract(ocrText: string): Promise<Extraction>;
+  /** signal aborts the call when the client goes away */
+  extract(ocrText: string, signal?: AbortSignal): Promise<Extraction>;
 }
 
 /**
@@ -34,7 +35,7 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
     } = {},
   ) {}
 
-  async extract(ocrText: string): Promise<Extraction> {
+  async extract(ocrText: string, signal?: AbortSignal): Promise<Extraction> {
     const startedAt = performance.now();
     log.info(`Calling LLM ${this.model}`, {
       llm: { url: this.url, model: this.model, outputFormat: this.options.outputFormat ?? 'json_schema', ocrChars: ocrText.length },
@@ -63,7 +64,9 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
               },
             }),
       }),
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
+        : AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {
       throw new Error(`LLM server answered ${res.status}: ${(await res.text()).slice(0, 200)}`);

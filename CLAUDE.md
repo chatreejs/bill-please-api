@@ -37,10 +37,11 @@ src/
   scanners/
     types.ts          ReceiptScanner interface { scan(image): ReceiptScanResult }, ReceiptImage
     index.ts          createScanner(config) builds the OCR and LLM scanner, and scanReceiptImage()
-    errors.ts         UnreadableReceiptError: no usable text in the image (REST 422)
+    errors.ts         UnreadableReceiptError: no usable text in the image (REST 422), ScannerBusyError: LLM queue full or wait timed out (REST 503)
     ocr-llm-scanner.ts OcrLlmReceiptScanner: OCR, then LLM, then post-processing and a total check
     ocr-client.ts     HttpOcrClient for bill-please-ocr POST /v1/ocr, forwards X-Request-Id
     llm-client.ts     OpenAiCompatibleExtractor: chat completions with a GBNF grammar or a json_schema response_format
+    llm-queue.ts      ConcurrencyLimiter (FIFO, LLM_MAX_CONCURRENT slots) and QueuedExtractor, which wraps the extractor
     extraction.ts     compact LLM output schema (zod), its JSON schema and its GBNF grammar
     prompt.ts         system prompt with one short example
     postprocess.ts    toReceiptItems (compact output to the contract), resolveRates and reconcile (vs printed total)
@@ -52,6 +53,7 @@ src/
 test/app.test.ts      tests through app.handle(new Request(...)), without a real port
 test/scanner.test.ts  OCR and LLM scanner with a stub OCR client and extractor, no network
 test/turnstile.test.ts Turnstile on the scan route with a stub siteverify fetch, no network
+test/llm-queue.test.ts the LLM queue, and the 503 and isError answers when it is busy
 ```
 
 Key points:
@@ -65,6 +67,8 @@ Key points:
   - `toReceiptItems` moves a quantity column the model left in the name ("4.00 F1.Water") into the quantity.
   - `reconcile` prices the items the way the web does and logs WARN when they don't match the printed total, or when there is no printed total, which counts as unchecked. There is no retry or fallback yet.
   - When OCR finds no lines, the mean confidence is under `OCR_MIN_CONFIDENCE`, or the LLM finds no items, the scanner throws `UnreadableReceiptError` without calling the LLM. REST answers 422, and MCP returns a friendly `isError`.
+  - **LLM queue.** `createScanner` wraps the extractor in `QueuedExtractor`, so at most `LLM_MAX_CONCURRENT` scans call the LLM at once and the rest wait first in, first out. Only the LLM step queues; OCR runs before it without a limit. A scan that finds `LLM_QUEUE_MAX` scans already waiting, or waits longer than `LLM_QUEUE_TIMEOUT_MS`, throws `ScannerBusyError`. REST answers 503 with `Retry-After: 15`, and MCP returns a busy `isError`. The REST route passes `request.signal` and MCP passes `extra.signal` down through `scan(image, signal)`, so a client that goes away leaves the queue and aborts its LLM call. The queue lives in memory per process, like the rate limiter. The queue logs `Waiting for an LLM slot at position N`, `Got an LLM slot after waiting Nms` (`queue.waitMs`), and WARN records when it rejects a scan or gives up waiting.
+  - On 2026-11-02 the cluster llm-server (llama.cpp `--parallel 1`, Qwen3 4B on the T400) took about 12 s for a 10-item receipt with a warm prompt cache. It runs concurrent requests one after another inside llama.cpp, with latencies of 12, 25, 38 and 50 s for 4 requests at once, so the right `LLM_MAX_CONCURRENT` is 1. Raising it only helps after `llmServer.server.parallel` goes up, and each extra slot shares the 4096-token context.
   - llama.cpp rejects boolean subschemas, so `extraction.ts` strips the `items: false` that zod adds to tuples.
 - **MCP transport.** The route uses the SDK's `WebStandardStreamableHTTPServerTransport`, which takes a Request and returns a Response, so it fits Elysia without a community MCP plugin. It runs in stateless mode (`sessionIdGenerator: undefined`, `enableJsonResponse: true`) and creates a fresh `McpServer` and transport per request, closed in `finally`. The route must keep `{ parse: 'none' }`, otherwise Elysia consumes the body before the transport reads it.
 - **MCP tool `scan_receipt`.** Its input is `{ imageBase64, mimeType }` and its `outputSchema` is `ReceiptScanResultSchema.shape`. It returns both `structuredContent` and a JSON `text` content, and has the `readOnlyHint` annotation.
@@ -125,6 +129,9 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 | `OCR_MIN_CONFIDENCE` | `0.6` | Mean line confidence below this answers 422 without an LLM call |
 | `LLM_URL`, `LLM_MODEL`, `LLM_TIMEOUT_MS` | `http://localhost:8080/v1`, `qwen3-4b-instruct-2507`, `45000` | Any OpenAI compatible API |
 | `LLM_API_KEY` | | Bearer token, only for APIs that need one |
+| `LLM_MAX_CONCURRENT` | `1` | Scans sent to the LLM at the same time. The rest wait in a FIFO queue. Match the llm-server's llama.cpp `--parallel` |
+| `LLM_QUEUE_MAX` | `10` | Scans allowed to wait for the LLM. More answer 503. `0` rejects every scan while the LLM is busy |
+| `LLM_QUEUE_TIMEOUT_MS` | `20000` | Longest wait for an LLM slot before 503. `0` waits until the client gives up. The web's 60 s Axios timeout covers OCR, the wait and the LLM call together |
 | `LLM_REASONING_EFFORT` | `none` | Sent as `reasoning_effort`. `none` turns off reasoning in thinking models such as Gemma 4, which was 5 to 20 times slower with reasoning and no more accurate. Leave it empty for APIs that reject the field |
 | `LLM_OUTPUT_FORMAT` | `gbnf` | `gbnf` sends `extractionGrammar`, a compact GBNF grammar that only llama.cpp accepts. On the T400 it cut the average output from 164 to 129 tokens. Set `json_schema` for any other OpenAI compatible API |
 | `TURNSTILE_SECRET_KEY` | | Cloudflare Turnstile secret key. Empty turns the check off. For local tests use Cloudflare's test secrets `1x0000000000000000000000000000000AA` (passes) or `2x0000000000000000000000000000000AA` (fails) |
@@ -150,19 +157,19 @@ The manifest repo is `../../gitlab.com/chatreedev-manifest/bill-please-backend`.
 - **Prod.** `values-prod.yaml` is for `mcp.chatree.dev`, but there is no prod Argo CD app yet. Going live needs a merge to `main` in both code repos, the release Jenkins builds, a prod Argo CD app and `VITE_APP_BILL_PLEASE_MCP_URL=https://mcp.chatree.dev/bill-please` in the Vercel prod env of bill-please web.
 - **Traffic path.** Cloudflare, then the cloudflared tunnel pod (namespace `cloudflare-tunnel`), then Traefik, then the pod. Traefik replaces `X-Forwarded-For` with the cloudflared pod IP, so with `TRUST_PROXY=true` (the chart default) the app reads `CF-Connecting-IP` first.
 - **Replicas.** mcp runs 1 replica with no HPA in either environment, because each pod keeps its own in-memory rate limiter. Dev had an HPA override until 2026-10-30, and it could not read CPU or memory metrics.
-- **Shutdown.** Both pods sleep 5 s in `preStop` (the Kubernetes `sleep` action, no binary needed), so Traefik stops routing to them before SIGTERM. mcp then lets in-flight scans finish within `terminationGracePeriodSeconds: 75`, which covers the OCR and LLM timeouts (20 s + 45 s), and ocr within 30 s. Without the sleep, a rollout answered 504. With it, a restart under a request every 0.5 s returned 82 of 82 with 200.
+- **Shutdown.** Both pods sleep 5 s in `preStop` (the Kubernetes `sleep` action, no binary needed), so Traefik stops routing to them before SIGTERM. mcp then lets in-flight scans finish within `terminationGracePeriodSeconds: 90`, which covers the OCR timeout, the LLM queue wait and the LLM timeout (20 s + 20 s + 45 s), and ocr within 30 s. Without the sleep, a rollout answered 504. With it, a restart under a request every 0.5 s returned 82 of 82 with 200.
 - **LLM.** The cluster's llama.cpp accepts the `grammar` field and `reasoning_effort`, so dev keeps the `LLM_OUTPUT_FORMAT=gbnf` default. On the T400 a 14-item receipt (bill-3) takes about 42 s end to end, close to the web's 60 s Axios timeout.
 
 CI is Jenkins only. SonarQube covers static analysis, so there is no GitHub Actions workflow and no CodeQL. Dependabot updates the Bun dependencies and the Docker base image.
 
 ## Status and roadmap
 
-Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, tests (52 passing), the Dockerfile and the web integration.
+Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, the LLM queue, tests (60 passing), the Dockerfile and the web integration.
 
 Likely next steps:
 
 1. Code work happens on `develop`, with `git@github.com:chatreejs/bill-please-mcp` as the remote. Add commitlint and husky like bill-please, for Conventional Commits with a lowercase subject.
-2. Finish the scanner: test it on real receipts, add a scan queue (one GPU serves one scan at a time), a `/livez` probe and a dependency-aware `/health`, and maybe a cloud fallback. The user hasn't chosen a cloud provider.
+2. Finish the scanner: test it on real receipts, a `/livez` probe and a dependency-aware `/health`, and maybe a cloud fallback. The user hasn't chosen a cloud provider.
 3. Add auth on `/mcp`, an API key or OAuth, before exposing a paid model publicly.
 4. Use a shared rate-limit store if the server runs as several replicas.
 5. A possible future MCP tool could create a bill-please bill from the items and return a link that opens the web app pre-filled. That needs an import-from-URL feature in bill-please web, which only uses localStorage today.

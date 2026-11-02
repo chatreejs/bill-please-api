@@ -7,5 +7,6 @@ export interface ReceiptImage {
 
 /** Turns a receipt image into structured bill items (OCR / VLM backend) */
 export interface ReceiptScanner {
-  scan(image: ReceiptImage): Promise<ReceiptScanResult>;
+  /** signal aborts the scan, including its place in the LLM queue, when the client goes away */
+  scan(image: ReceiptImage, signal?: AbortSignal): Promise<ReceiptScanResult>;
 }
