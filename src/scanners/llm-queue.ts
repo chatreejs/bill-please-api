@@ -1,7 +1,7 @@
 import { getLogger } from '../logger.ts';
 import { ScannerBusyError } from './errors.ts';
 import type { Extraction } from './extraction.ts';
-import type { ReceiptExtractor } from './llm-client.ts';
+import type { ExtractOptions, ReceiptExtractor } from './llm-client.ts';
 import type { ScannerStatus } from './types.ts';
 
 const log = getLogger('scanner.queue');
@@ -46,8 +46,9 @@ export class ConcurrencyLimiter {
     };
   }
 
-  async run<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    await this.acquire(signal);
+  /** onQueued gets the task's position when it has to wait. Position 1 is next */
+  async run<T>(task: () => Promise<T>, signal?: AbortSignal, onQueued?: (position: number) => void): Promise<T> {
+    await this.acquire(signal, onQueued);
     try {
       return await task();
     } finally {
@@ -55,7 +56,7 @@ export class ConcurrencyLimiter {
     }
   }
 
-  private acquire(signal?: AbortSignal): Promise<void> {
+  private acquire(signal?: AbortSignal, onQueued?: (position: number) => void): Promise<void> {
     signal?.throwIfAborted();
     if (this.active < this.options.maxConcurrent && this.waiting.length === 0) {
       this.active++;
@@ -71,6 +72,7 @@ export class ConcurrencyLimiter {
     const position = this.waiting.length + 1;
     log.info(`Waiting for an LLM slot at position ${position}`, { queue: { ...this.stats, position } });
     const startedAt = performance.now();
+    onQueued?.(position);
 
     return new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -128,7 +130,11 @@ export class QueuedExtractor implements ReceiptExtractor {
     return this.limiter.status();
   }
 
-  extract(ocrText: string, signal?: AbortSignal): Promise<Extraction> {
-    return this.limiter.run(() => this.extractor.extract(ocrText, signal), signal);
+  extract(ocrText: string, options: ExtractOptions = {}): Promise<Extraction> {
+    return this.limiter.run(
+      () => this.extractor.extract(ocrText, options),
+      options.signal,
+      (position) => options.onEvent?.({ type: 'queued', position }),
+    );
   }
 }

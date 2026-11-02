@@ -1,10 +1,11 @@
 import { getLogger } from '../logger.ts';
 import type { ReceiptScanResult } from '../schemas/receipt.ts';
 import { UnreadableReceiptError } from './errors.ts';
-import type { ReceiptImage, ReceiptScanner, ScannerStatus } from './types.ts';
+import type { ReceiptImage, ReceiptScanner, ScannerStatus, ScanOptions } from './types.ts';
 import type { ReceiptExtractor } from './llm-client.ts';
 import { meanConfidence, type OcrClient } from './ocr-client.ts';
 import { reconcile, resolveRates, toReceiptItems } from './postprocess.ts';
+import type { ExtractionEvent } from './progress.ts';
 
 const log = getLogger('scanner');
 
@@ -23,7 +24,8 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
     return this.extractor.status?.();
   }
 
-  async scan(image: ReceiptImage, signal?: AbortSignal): Promise<ReceiptScanResult> {
+  async scan(image: ReceiptImage, { signal, onProgress }: ScanOptions = {}): Promise<ReceiptScanResult> {
+    onProgress?.({ stage: 'ocr' });
     const ocr = await this.ocr.recognize(image);
     const confidence = meanConfidence(ocr.lines);
     // Skip the LLM call, which costs 10 s or more, when there is nothing to read
@@ -33,7 +35,11 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
       );
     }
 
-    const raw = await this.extractor.extract(ocr.text, signal);
+    const onEvent = (event: ExtractionEvent) => {
+      if (event.type === 'queued') onProgress?.({ stage: 'queue', position: event.position });
+      else onProgress?.({ stage: 'llm', items: event.type === 'item' ? event.count : 0 });
+    };
+    const raw = await this.extractor.extract(ocr.text, { signal, onEvent });
     const extraction = resolveRates(raw, ocr.text);
     if (extraction !== raw) {
       const { servicePercent, vatPercent, vatIncluded } = extraction;

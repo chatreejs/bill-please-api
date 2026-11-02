@@ -1,4 +1,5 @@
 import type { ReceiptScanResult, SupportedImageType } from '../schemas/receipt.ts';
+import type { ProgressListener } from './progress.ts';
 
 export interface ReceiptImage {
   data: Uint8Array;
@@ -12,10 +13,16 @@ export interface ScannerStatus {
   queue: { active: number; waiting: number; maxConcurrent: number; maxQueue: number };
 }
 
+export interface ScanOptions {
+  /** Aborts the scan, including its place in the LLM queue, when the client goes away */
+  signal?: AbortSignal;
+  /** Gets each step of the scan */
+  onProgress?: ProgressListener;
+}
+
 /** Turns a receipt image into structured bill items (OCR / VLM backend) */
 export interface ReceiptScanner {
-  /** signal aborts the scan, including its place in the LLM queue, when the client goes away */
-  scan(image: ReceiptImage, signal?: AbortSignal): Promise<ReceiptScanResult>;
+  scan(image: ReceiptImage, options?: ScanOptions): Promise<ReceiptScanResult>;
   /** Queue state, undefined when the scanner has no queue */
   status?(): ScannerStatus | undefined;
 }

@@ -20,7 +20,7 @@ This is the backend for [bill-please](../bill-please), a client-only React PWA t
 
 | Endpoint                  | Protocol                                   | Consumer                                                                  |
 | ------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
-| `POST /api/receipts/scan` | REST, `multipart/form-data`, fields `image` and `cf-turnstile-response` | bill-please web                              |
+| `POST /api/receipts/scan` | REST, `multipart/form-data`, fields `image` and `cf-turnstile-response`. With `Accept: text/event-stream` it streams progress as Server-Sent Events | bill-please web                              |
 | `/mcp`                    | MCP Streamable HTTP, stateless             | AI clients such as Claude, ChatGPT and Cursor                             |
 | `GET /api/receipts/status` | REST                                      | bill-please web polls it to enable the "Add from bill" button, `busy` disables it |
 | `GET /health`             | REST                                       | Docker healthcheck and Kubernetes probes |
@@ -43,6 +43,7 @@ src/
     ocr-client.ts     HttpOcrClient for bill-please-ocr POST /v1/ocr, forwards X-Request-Id
     llm-client.ts     OpenAiCompatibleExtractor: chat completions with a GBNF grammar or a json_schema response_format
     llm-queue.ts      ConcurrencyLimiter (FIFO, LLM_MAX_CONCURRENT slots) and QueuedExtractor, which wraps the extractor
+    progress.ts       ScanProgress events and ItemCounter, which counts finished items in the streamed LLM output
     extraction.ts     compact LLM output schema (zod), its JSON schema and its GBNF grammar
     prompt.ts         system prompt with one short example
     postprocess.ts    toReceiptItems (compact output to the contract), resolveRates and reconcile (vs printed total)
@@ -55,6 +56,7 @@ test/app.test.ts      tests through app.handle(new Request(...)), without a real
 test/scanner.test.ts  OCR and LLM scanner with a stub OCR client and extractor, no network
 test/turnstile.test.ts Turnstile on the scan route with a stub siteverify fetch, no network
 test/llm-queue.test.ts the LLM queue, and the 503 and isError answers when it is busy
+test/progress.test.ts scan progress: item counting, the LLM stream and the SSE scan route
 ```
 
 Key points:
@@ -69,6 +71,9 @@ Key points:
   - `reconcile` prices the items the way the web does and logs WARN when they don't match the printed total, or when there is no printed total, which counts as unchecked. There is no retry or fallback yet.
   - When OCR finds no lines, the mean confidence is under `OCR_MIN_CONFIDENCE`, or the LLM finds no items, the scanner throws `UnreadableReceiptError` without calling the LLM. REST answers 422, and MCP returns a friendly `isError`.
   - **LLM queue.** `createScanner` wraps the extractor in `QueuedExtractor`, so at most `LLM_MAX_CONCURRENT` scans call the LLM at once and the rest wait first in, first out. Only the LLM step queues; OCR runs before it without a limit. A scan that finds `LLM_QUEUE_MAX` scans already waiting, or waits longer than `LLM_QUEUE_TIMEOUT_MS`, throws `ScannerBusyError`. REST answers 503 with `Retry-After: 15` and the body `{ error, code: 'scanner_busy' }`; the code tells it apart from the Turnstile 503, because the web can't read `Retry-After` cross-origin without `Access-Control-Expose-Headers`, and MCP returns a busy `isError`. The REST route passes `request.signal` and MCP passes `extra.signal` down through `scan(image, signal)`, so a client that goes away leaves the queue and aborts its LLM call. The queue lives in memory per process, like the rate limiter. `GET /api/receipts/status` answers `{ status: 'ok', busy, queue: { active, waiting, maxConcurrent, maxQueue } }`. `busy` is true when a new scan would get the queue-full 503 right now. The rate limit skips it and the access log writes it at DEBUG only, because every open web page polls it. The queue logs `Waiting for an LLM slot at position N`, `Got an LLM slot after waiting Nms` (`queue.waitMs`), and WARN records when it rejects a scan or gives up waiting.
+  - **Scan progress.** `scan(image, { signal, onProgress })` reports `{ stage, position?, items? }`. The stage is `ocr` when OCR starts, `queue` with the `position` when the scan has to wait, and `llm` when the call starts and each time the model finishes an item. The LLM call always sets `stream: true`, and `ItemCounter` counts finished items in the streamed output, which works because items is the first key. An API that ignores `stream` answers one JSON body, which the extractor still reads.
+    - When the request has `Accept: text/event-stream`, the REST route answers 200 with SSE: `event: progress` for each ScanProgress, then one `event: result` with the items or one `event: error` with `{ status, error, code? }`, the status and body the JSON answer would have. Turnstile, 413 and 415 still answer with a real status before the stream starts. A `: ping` comment every 5 s keeps proxies from closing the stream while the LLM reads the prompt. Cancelling the stream aborts the scan. The access log only has the time to the first byte, so the route logs `Closed the scan stream with status N after Nms` (`stream.status`, `stream.elapsedMs`). MCP gets no progress, because the stateless transport answers one JSON body.
+    - The LLM fetch sets `keepalive: false`. A queued scan starts the moment the previous stream ends, and a reused connection then failed with ECONNRESET every time through the port-forward.
   - On 2026-11-02 the cluster llm-server (llama.cpp `--parallel 1`, Qwen3 4B on the T400) took about 12 s for a 10-item receipt with a warm prompt cache. It runs concurrent requests one after another inside llama.cpp, with latencies of 12, 25, 38 and 50 s for 4 requests at once, so the right `LLM_MAX_CONCURRENT` is 1. Raising it only helps after `llmServer.server.parallel` goes up, and each extra slot shares the 4096-token context.
   - llama.cpp rejects boolean subschemas, so `extraction.ts` strips the `items: false` that zod adds to tuples.
 - **MCP transport.** The route uses the SDK's `WebStandardStreamableHTTPServerTransport`, which takes a Request and returns a Response, so it fits Elysia without a community MCP plugin. It runs in stateless mode (`sessionIdGenerator: undefined`, `enableJsonResponse: true`) and creates a fresh `McpServer` and transport per request, closed in `finally`. The route must keep `{ parse: 'none' }`, otherwise Elysia consumes the body before the transport reads it.
@@ -115,6 +120,7 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 - It reads the URL from `VITE_APP_BILL_PLEASE_MCP_URL`, for example `http://localhost:3001`. There is no local mock fallback anymore.
 - It resizes photos in the browser to a JPEG of at most 1600 px at quality 0.85 before upload. If the browser can't decode the photo, for example HEIC outside Safari, it sends the original file. So this server must keep accepting HEIC and HEIF.
 - It polls `GET /api/receipts/status` with TanStack Query every 5 s while the tab is visible, and on window focus. It disables the "Add from bill" button when the request fails (server unavailable), or when `busy` is true. Then it shows the tooltip "AI กำลังทำงานอย่างหนัก โปรดรอสักครู่". CORS must therefore allow the web origin on that path too.
+- It sends the scan with `Accept: text/event-stream` through the axios XHR adapter, and reads the events from `responseText` in `onDownloadProgress`, so the "Add from bill" modal shows the current step under the spinner, ending with the number of items found so far. It still reads a plain JSON answer from an older server.
 - The Axios timeout for a scan is 60 s.
 
 ## Environment (`.env.example`)
@@ -165,7 +171,7 @@ CI is Jenkins only. SonarQube covers static analysis, so there is no GitHub Acti
 
 ## Status and roadmap
 
-Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, the LLM queue, the status endpoint, tests (63 passing), the Dockerfile and the web integration.
+Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, the LLM queue, the status endpoint, streamed scan progress, tests (71 passing), the Dockerfile and the web integration.
 
 Likely next steps:
 
