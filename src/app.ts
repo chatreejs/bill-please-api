@@ -3,7 +3,7 @@ import { Elysia } from 'elysia';
 import { rateLimit } from 'elysia-rate-limit';
 
 import { type Config, corsOrigin } from './config.ts';
-import { createReadinessCheck, type ReadinessCheck } from './health.ts';
+import { createDependencyMonitor, createReadinessCheck, type DependencyMonitor } from './health.ts';
 import { mcpRoutes } from './mcp/route.ts';
 import { clientIp, requestLogger } from './request-logger.ts';
 import { receiptRoutes } from './routes/receipts.ts';
@@ -20,14 +20,19 @@ export const createApp = (
     hostnames: config.turnstileHostnames,
     timeoutMs: config.turnstileTimeoutMs,
   }),
-  checkReadiness: ReadinessCheck = createReadinessCheck({
-    ocrUrl: config.ocrUrl,
-    llmUrl: config.llmUrl,
-    llmApiKey: config.llmApiKey,
-    timeoutMs: config.readinessTimeoutMs,
-  }),
+  dependencies: DependencyMonitor = createDependencyMonitor(
+    createReadinessCheck({
+      ocrUrl: config.ocrUrl,
+      llmUrl: config.llmUrl,
+      llmApiKey: config.llmApiKey,
+      timeoutMs: config.readinessTimeoutMs,
+    }),
+  ),
 ) =>
   new Elysia()
+    // Check OCR and the LLM in the background while the server listens. app.handle() in tests never starts it
+    .onStart(() => dependencies.start())
+    .onStop(() => dependencies.stop())
     .use(requestLogger(config))
     .use(cors({ origin: config.corsOrigins.map(corsOrigin) }))
     // Liveness: the process answers. It checks no dependency, so a down LLM never restarts the pod
@@ -36,7 +41,7 @@ export const createApp = (
     .get('/health', () => ({ status: 'ok' }))
     // Readiness: OCR and the LLM answer, so a scan could succeed now. 503 takes the pod out of the Service
     .get('/readyz', async ({ status }) => {
-      const { ready, checks } = await checkReadiness();
+      const { ready, checks } = await dependencies.check();
       return ready ? { status: 'ok', checks } : status(503, { status: 'unavailable', checks });
     })
     .use(
@@ -48,5 +53,5 @@ export const createApp = (
         generator: (request, server) => clientIp(request, server, config.trustProxy),
       }),
     )
-    .use(receiptRoutes(config, scanner, verifyTurnstile))
-    .use(mcpRoutes(config, scanner));
+    .use(receiptRoutes(config, scanner, dependencies, verifyTurnstile))
+    .use(mcpRoutes(config, scanner, dependencies));

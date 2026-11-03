@@ -2,6 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { Elysia } from 'elysia';
 
 import type { Config } from '../config.ts';
+import type { DependencyMonitor } from '../health.ts';
 import type { ReceiptScanner } from '../scanners/index.ts';
 import { createMcpServer } from './server.ts';
 
@@ -9,11 +10,11 @@ import { createMcpServer } from './server.ts';
  * Streamable HTTP MCP endpoint in stateless mode: every request gets a fresh
  * server + transport, so it scales horizontally without sticky sessions.
  */
-export const mcpRoutes = (config: Config, scanner: ReceiptScanner) =>
+export const mcpRoutes = (config: Config, scanner: ReceiptScanner, dependencies?: DependencyMonitor) =>
   new Elysia().all(
     '/mcp',
     async ({ request }) => {
-      const server = createMcpServer(config, scanner);
+      const server = createMcpServer(config, scanner, dependencies);
       const transport = new WebStandardStreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,

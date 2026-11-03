@@ -2,8 +2,16 @@ import { getLogger } from './logger.ts';
 
 const log = getLogger('health');
 
-// Probes poll every 10 s and /readyz is public, so reuse one result for this long
-const CACHE_MS = 5000;
+// /readyz is public, so concurrent calls share one check and reuse its result this long.
+// Keep it under MONITOR_INTERVAL_MS, so each monitor tick runs a fresh check
+const CACHE_MS = 2000;
+
+// How often the monitor checks OCR and the LLM in the background
+export const MONITOR_INTERVAL_MS = 5000;
+
+// Failed checks in a row before scanning counts as unavailable, so one slow answer doesn't
+// disable "Add from bill". With MONITOR_INTERVAL_MS this notices an outage within about 10 s
+export const FAILURES_BEFORE_UNAVAILABLE = 2;
 
 export interface DependencyCheck {
   ok: boolean;
@@ -59,21 +67,13 @@ export const createReadinessCheck = (
   fetchFn: typeof fetch = fetch,
 ): ReadinessCheck => {
   let cached: { at: number; result: Promise<Readiness> } | undefined;
-  let lastReady: boolean | undefined;
 
   const run = async (): Promise<Readiness> => {
     const [ocr, llm] = await Promise.all([
       check(`${ocrUrl}/readyz`, {}, timeoutMs, fetchFn),
       check(`${llmUrl}/models`, llmApiKey ? { authorization: `Bearer ${llmApiKey}` } : {}, timeoutMs, fetchFn),
     ]);
-    const result = { ready: ocr.ok && llm.ok, checks: { ocr, llm } };
-    // Log changes only, because probes call this every 10 s
-    if (result.ready !== lastReady) {
-      if (result.ready) log.info('Dependencies are ready', { checks: result.checks });
-      else log.warn('Dependencies are not ready', { checks: result.checks });
-      lastReady = result.ready;
-    }
-    return result;
+    return { ready: ocr.ok && llm.ok, checks: { ocr, llm } };
   };
 
   return () => {
@@ -81,4 +81,67 @@ export const createReadinessCheck = (
     if (!cached || now - cached.at >= CACHE_MS) cached = { at: now, result: run() };
     return cached.result;
   };
+};
+
+export type AvailabilityListener = (available: boolean) => void;
+
+/** Whether OCR and the LLM answer, kept up to date in the background */
+export interface DependencyMonitor {
+  /** False once FAILURES_BEFORE_UNAVAILABLE checks in a row failed. True before the first check */
+  readonly available: boolean;
+  /** Runs the readiness check now and updates `available` */
+  check(): Promise<Readiness>;
+  /** Calls listener each time `available` changes. Returns a function that stops it */
+  onChange(listener: AvailabilityListener): () => void;
+  /** Checks now and then every intervalMs, until stop() */
+  start(): void;
+  stop(): void;
+}
+
+export const createDependencyMonitor = (
+  checkReadiness: ReadinessCheck,
+  { intervalMs = MONITOR_INTERVAL_MS, failuresBeforeUnavailable = FAILURES_BEFORE_UNAVAILABLE } = {},
+): DependencyMonitor => {
+  const listeners = new Set<AvailabilityListener>();
+  let available = true;
+  let failures = 0;
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  const update = (result: Readiness) => {
+    failures = result.ready ? 0 : failures + 1;
+    // Recover on the first good check, so the button comes back as soon as it can
+    const next = result.ready || (available && failures < failuresBeforeUnavailable);
+    if (next === available) return;
+    available = next;
+    if (available) log.info('Receipt scanning is available again', { checks: result.checks });
+    else log.warn('Receipt scanning is unavailable, because a dependency is down', { checks: result.checks });
+    for (const listener of listeners) listener(available);
+  };
+
+  const monitor: DependencyMonitor = {
+    get available() {
+      return available;
+    },
+    async check() {
+      const result = await checkReadiness();
+      update(result);
+      return result;
+    },
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    start() {
+      if (timer) return;
+      void monitor.check();
+      timer = setInterval(() => void monitor.check(), intervalMs);
+      // Don't keep the process alive for the monitor alone
+      timer.unref?.();
+    },
+    stop() {
+      clearInterval(timer);
+      timer = undefined;
+    },
+  };
+  return monitor;
 };

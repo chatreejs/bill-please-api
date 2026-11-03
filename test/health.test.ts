@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { createApp } from '../src/app.ts';
 import { config } from '../src/config.ts';
-import { createReadinessCheck } from '../src/health.ts';
+import { createDependencyMonitor, createReadinessCheck, type Readiness } from '../src/health.ts';
 import { configureLogger } from '../src/logger.ts';
 import type { ReceiptScanner } from '../src/scanners/index.ts';
 
@@ -67,16 +67,71 @@ describe('readiness check', () => {
   });
 });
 
-describe('probe routes', () => {
-  const app = (ready: boolean) =>
-    createApp(testConfig, stubScanner, undefined, async () => ({
-      ready,
-      checks: {
-        ocr: { ok: true, status: 200, elapsedMs: 1 },
-        llm: ready ? { ok: true, status: 200, elapsedMs: 1 } : { ok: false, error: 'down', elapsedMs: 1 },
+const readiness = (ready: boolean): Readiness => ({
+  ready,
+  checks: {
+    ocr: { ok: true, status: 200, elapsedMs: 1 },
+    llm: ready ? { ok: true, status: 200, elapsedMs: 1 } : { ok: false, error: 'down', elapsedMs: 1 },
+  },
+});
+
+/** A monitor whose dependencies are up or down as `state.ready` says */
+const switchableMonitor = (state = { ready: true }) =>
+  createDependencyMonitor(async () => readiness(state.ready), { failuresBeforeUnavailable: 1 });
+
+describe('dependency monitor', () => {
+  it('turns unavailable after enough failed checks in a row, and back on the first good one', async () => {
+    const state = { ready: true };
+    const monitor = createDependencyMonitor(async () => readiness(state.ready), { failuresBeforeUnavailable: 2 });
+    const changes: boolean[] = [];
+    monitor.onChange((available) => changes.push(available));
+
+    expect(monitor.available).toBe(true);
+    state.ready = false;
+    await monitor.check();
+    expect(monitor.available).toBe(true);
+    await monitor.check();
+    expect(monitor.available).toBe(false);
+    await monitor.check();
+    state.ready = true;
+    await monitor.check();
+    expect(monitor.available).toBe(true);
+    expect(changes).toEqual([false, true]);
+  });
+
+  it('resets the failure count after a good check', async () => {
+    const results = [false, true, false];
+    const monitor = createDependencyMonitor(async () => readiness(results.shift() ?? true), {
+      failuresBeforeUnavailable: 2,
+    });
+    for (let i = 0; i < 3; i++) await monitor.check();
+    expect(monitor.available).toBe(true);
+  });
+
+  it('checks in the background between start and stop', async () => {
+    let calls = 0;
+    const monitor = createDependencyMonitor(
+      async () => {
+        calls++;
+        return readiness(true);
       },
-    }));
-  const get = (path: string, ready = false) => app(ready).handle(new Request(`http://localhost${path}`));
+      { intervalMs: 5 },
+    );
+    monitor.start();
+    await Bun.sleep(30);
+    monitor.stop();
+    const afterStop = calls;
+    expect(afterStop).toBeGreaterThan(1);
+    await Bun.sleep(20);
+    expect(calls).toBe(afterStop);
+  });
+});
+
+describe('probe routes', () => {
+  const get = (path: string, ready = false) =>
+    createApp(testConfig, stubScanner, undefined, switchableMonitor({ ready })).handle(
+      new Request(`http://localhost${path}`),
+    );
 
   it('answers /livez and /health without checking dependencies', async () => {
     for (const path of ['/livez', '/health']) {
@@ -96,5 +151,118 @@ describe('probe routes', () => {
     const res = await get('/readyz');
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ status: 'unavailable', checks: { llm: { ok: false, error: 'down' } } });
+  });
+});
+
+describe('while OCR or the LLM is down', () => {
+  const setup = async () => {
+    const state = { ready: true };
+    const monitor = switchableMonitor(state);
+    let scans = 0;
+    const scanner: ReceiptScanner = {
+      scan: async () => {
+        scans++;
+        return { items: [] };
+      },
+    };
+    const app = createApp(testConfig, scanner, undefined, monitor);
+    const goDown = async () => {
+      state.ready = false;
+      await monitor.check();
+    };
+    return { app, monitor, state, goDown, scans: () => scans };
+  };
+
+  const scanRequest = (accept?: string) => {
+    const form = new FormData();
+    form.append('image', new File([new Uint8Array([137, 80, 78, 71])], 'bill.png', { type: 'image/png' }));
+    return new Request('http://localhost/api/receipts/scan', {
+      method: 'POST',
+      body: form,
+      headers: accept ? { accept } : {},
+    });
+  };
+
+  it('reports available: false on the status endpoint', async () => {
+    const { app, goDown } = await setup();
+    const status = async () => (await app.handle(new Request('http://localhost/api/receipts/status'))).json();
+    expect(await status()).toMatchObject({ available: true });
+    await goDown();
+    expect(await status()).toMatchObject({ available: false, busy: false });
+  });
+
+  it('pushes a status event on the open stream when a dependency goes down', async () => {
+    const { app, goDown } = await setup();
+    const controller = new AbortController();
+    const res = await app.handle(
+      new Request('http://localhost/api/receipts/status', {
+        headers: { accept: 'text/event-stream' },
+        signal: controller.signal,
+      }),
+    );
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    const readUntil = async (match: string) => {
+      while (!text.includes(match)) text += decoder.decode((await reader.read()).value);
+    };
+    await readUntil('"available":true');
+    await goDown();
+    await readUntil('"available":false');
+    controller.abort();
+    await reader.cancel();
+  });
+
+  it('answers a scan with 503 scanner_unavailable without calling the scanner', async () => {
+    const { app, goDown, scans } = await setup();
+    await goDown();
+    const res = await app.handle(scanRequest());
+    expect(res.status).toBe(503);
+    expect(res.headers.get('retry-after')).toBe('30');
+    expect(await res.json()).toEqual({
+      error: 'The receipt scanner is temporarily unavailable',
+      code: 'scanner_unavailable',
+    });
+    expect(scans()).toBe(0);
+  });
+
+  it('answers with a real 503 before a scan stream starts', async () => {
+    const { app, goDown } = await setup();
+    await goDown();
+    const res = await app.handle(scanRequest('text/event-stream'));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: 'scanner_unavailable' });
+  });
+
+  it('scans again once the dependencies come back', async () => {
+    const { app, monitor, state, goDown } = await setup();
+    await goDown();
+    state.ready = true;
+    await monitor.check();
+    expect((await app.handle(scanRequest())).status).toBe(200);
+  });
+
+  it('returns isError from the MCP tool', async () => {
+    const { app, goDown, scans } = await setup();
+    await goDown();
+    const res = await app.handle(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'scan_receipt',
+            arguments: { imageBase64: Buffer.from('fake').toString('base64'), mimeType: 'image/png' },
+          },
+        }),
+      }),
+    );
+    const body = (await res.json()) as { result: { isError: boolean; content: { text: string }[] } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0]!.text).toContain('temporarily unavailable');
+    expect(scans()).toBe(0);
   });
 });

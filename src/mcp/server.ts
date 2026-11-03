@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import * as z from 'zod';
 
 import type { Config } from '../config.ts';
+import type { DependencyMonitor } from '../health.ts';
 import { getLogger } from '../logger.ts';
 import {
   type ReceiptScanner,
@@ -22,7 +23,7 @@ const toolError = (text: string) => ({
 });
 
 /** MCP server exposing Bill Please tools to AI clients */
-export const createMcpServer = (config: Config, scanner: ReceiptScanner) => {
+export const createMcpServer = (config: Config, scanner: ReceiptScanner, dependencies?: DependencyMonitor) => {
   const server = new McpServer({
     name: 'bill-please',
     version: '0.1.0',
@@ -44,6 +45,10 @@ export const createMcpServer = (config: Config, scanner: ReceiptScanner) => {
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ imageBase64, mimeType }, extra) => {
+      if (dependencies && !dependencies.available) {
+        log.warn('scan_receipt rejected, because OCR or the LLM is down');
+        return toolError('The receipt scanner is temporarily unavailable. Try again in a few minutes.');
+      }
       const data = Buffer.from(imageBase64, 'base64');
       if (data.length === 0) {
         log.warn('scan_receipt rejected: imageBase64 is not valid base64');

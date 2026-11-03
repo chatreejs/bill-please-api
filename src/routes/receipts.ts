@@ -1,6 +1,7 @@
 import { Elysia, t } from 'elysia';
 
 import type { Config } from '../config.ts';
+import type { DependencyMonitor } from '../health.ts';
 import { getLogger } from '../logger.ts';
 import { clientIp } from '../request-logger.ts';
 import {
@@ -18,13 +19,16 @@ const log = getLogger('receipts.route');
 // One scan takes about this long on the T400
 const RETRY_AFTER_SECONDS = 15;
 
+// The dependency monitor checks every 5 s, so ask a client to come back after a few checks
+const UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
+
 // The LLM can read the prompt for 12 s without output. A ping every 5 s keeps proxies
 // from closing the stream as idle
 const HEARTBEAT_MS = 5000;
 
 interface ScanFailure {
   status: 422 | 502 | 503;
-  body: { error: string; code?: 'scanner_busy' };
+  body: { error: string; code?: 'scanner_busy' | 'scanner_unavailable' };
 }
 
 /** The status and body for a failed scan, the same for JSON and SSE */
@@ -111,10 +115,18 @@ const streamScan = (
 // How long EventSource waits before it reconnects after the status stream drops
 const STATUS_RETRY_MS = 5000;
 
-/** The body of GET /api/receipts/status, and of each `status` event in its stream */
-const statusBody = (scanner: ReceiptScanner) => {
+/**
+ * The body of GET /api/receipts/status, and of each `status` event in its stream. `available` is
+ * false while OCR or the LLM is down, so the web disables "Add from bill" before anyone tries a scan
+ */
+const statusBody = (scanner: ReceiptScanner, dependencies?: DependencyMonitor) => {
   const status = scanner.status?.();
-  return { status: 'ok' as const, busy: status?.busy ?? false, ...(status ? { queue: status.queue } : {}) };
+  return {
+    status: 'ok' as const,
+    busy: status?.busy ?? false,
+    available: dependencies?.available ?? true,
+    ...(status ? { queue: status.queue } : {}),
+  };
 };
 
 /**
@@ -122,7 +134,12 @@ const statusBody = (scanner: ReceiptScanner) => {
  * queue state changes, until the client goes away. A ping every HEARTBEAT_MS keeps
  * Bun's idle timeout and proxies from closing the stream.
  */
-const streamStatus = (scanner: ReceiptScanner, requestSignal: AbortSignal, headers: Record<string, unknown>) => {
+const streamStatus = (
+  scanner: ReceiptScanner,
+  dependencies: DependencyMonitor | undefined,
+  requestSignal: AbortSignal,
+  headers: Record<string, unknown>,
+) => {
   const encoder = new TextEncoder();
   let stop = () => {};
 
@@ -134,7 +151,7 @@ const streamStatus = (scanner: ReceiptScanner, requestSignal: AbortSignal, heade
         if (!closed) controller.enqueue(encoder.encode(text));
       };
       const send = () => {
-        const data = JSON.stringify(statusBody(scanner));
+        const data = JSON.stringify(statusBody(scanner, dependencies));
         // Send nothing when the status matches the last one sent
         if (data === last) return;
         last = data;
@@ -142,7 +159,13 @@ const streamStatus = (scanner: ReceiptScanner, requestSignal: AbortSignal, heade
       };
 
       const heartbeat = setInterval(() => write(': ping\n\n'), HEARTBEAT_MS);
-      const unsubscribe = scanner.onStatusChange?.(send) ?? (() => {});
+      // Send a status each time the LLM queue changes or OCR or the LLM goes down or comes back
+      const unsubscribeQueue = scanner.onStatusChange?.(send) ?? (() => {});
+      const unsubscribeDependencies = dependencies?.onChange(send) ?? (() => {});
+      const unsubscribe = () => {
+        unsubscribeQueue();
+        unsubscribeDependencies();
+      };
       const onAbort = () => {
         stop();
         try {
@@ -184,6 +207,7 @@ const isSupportedImageType = (type: string): type is SupportedImageType =>
 export const receiptRoutes = (
   config: Config,
   scanner: ReceiptScanner,
+  dependencies?: DependencyMonitor,
   verifyTurnstile?: TurnstileVerifier,
 ) =>
   new Elysia({ prefix: '/api/receipts' })
@@ -191,14 +215,24 @@ export const receiptRoutes = (
     // while busy. Other clients, such as curl and older web builds, get one JSON body
     .get('/status', ({ request, set }) =>
       request.headers.get('accept')?.includes('text/event-stream')
-        ? streamStatus(scanner, request.signal, set.headers)
-        : statusBody(scanner),
+        ? streamStatus(scanner, dependencies, request.signal, set.headers)
+        : statusBody(scanner, dependencies),
     )
     .post(
     '/scan',
     async ({ body, status, request, server, set }) => {
       const { image } = body;
-      // Check Turnstile first, so a bot never reaches the paid OCR and LLM steps
+      // Fail fast while OCR or the LLM is down, instead of after their timeouts. This runs before
+      // Turnstile, so the visitor's single-use token isn't spent on a scan that can't work
+      if (dependencies && !dependencies.available) {
+        log.warn('Rejected a scan, because OCR or the LLM is down');
+        set.headers['retry-after'] = String(UNAVAILABLE_RETRY_AFTER_SECONDS);
+        return status(503, {
+          error: 'The receipt scanner is temporarily unavailable',
+          code: 'scanner_unavailable',
+        });
+      }
+      // Then check Turnstile, so a bot never reaches the paid OCR and LLM steps
       if (verifyTurnstile) {
         const outcome = await verifyTurnstile(
           body['cf-turnstile-response'],

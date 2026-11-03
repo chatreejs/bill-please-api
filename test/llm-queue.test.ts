@@ -154,6 +154,7 @@ describe('GET /api/receipts/status', () => {
     expect(await status()).toEqual({
       status: 'ok',
       busy: false,
+      available: true,
       queue: { active: 0, waiting: 0, maxConcurrent: 1, maxQueue: 1 },
     });
 
@@ -176,7 +177,7 @@ describe('GET /api/receipts/status', () => {
 
   it('reports not busy for a scanner without a queue', async () => {
     const plain = createApp(testConfig, { scan: async () => ({ items: [] }) });
-    expect(await status(plain)).toEqual({ status: 'ok', busy: false });
+    expect(await status(plain)).toEqual({ status: 'ok', busy: false, available: true });
   });
 });
 
@@ -223,6 +224,7 @@ describe('GET /api/receipts/status as Server-Sent Events', () => {
     expect(await stream.next()).toEqual({
       status: 'ok',
       busy: false,
+      available: true,
       queue: { active: 0, waiting: 0, maxConcurrent: 1, maxQueue: 1 },
     });
 
@@ -264,7 +266,7 @@ describe('GET /api/receipts/status as Server-Sent Events', () => {
 
   it('sends one not busy status for a scanner without a queue', async () => {
     const stream = await openStream({ scan: async () => ({ items: [] }) });
-    expect(await stream.next()).toEqual({ status: 'ok', busy: false });
+    expect(await stream.next()).toEqual({ status: 'ok', busy: false, available: true });
     await stream.close();
   });
 });
