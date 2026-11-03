@@ -19,7 +19,7 @@ const log = getLogger('receipts.route');
 // One scan takes about this long on the T400
 const RETRY_AFTER_SECONDS = 15;
 
-// The dependency monitor checks every 5 s, so ask a client to come back after a few checks
+// The dependency monitor checks every 5 s, so ask a client to retry after a few checks
 const UNAVAILABLE_RETRY_AFTER_SECONDS = 30;
 
 // The LLM can read the prompt for 12 s without output. A ping every 5 s keeps proxies
@@ -117,7 +117,7 @@ const STATUS_RETRY_MS = 5000;
 
 /**
  * The body of GET /api/receipts/status, and of each `status` event in its stream. `available` is
- * false while OCR or the LLM is down, so the web disables "Add from bill" before anyone tries a scan
+ * false while OCR or the LLM is down. The web then disables "Add from bill" before anyone tries a scan
  */
 const statusBody = (scanner: ReceiptScanner, dependencies?: DependencyMonitor) => {
   const status = scanner.status?.();
@@ -159,7 +159,7 @@ const streamStatus = (
       };
 
       const heartbeat = setInterval(() => write(': ping\n\n'), HEARTBEAT_MS);
-      // Send a status each time the LLM queue changes or OCR or the LLM goes down or comes back
+      // Send a status when the LLM queue changes, and when OCR or the LLM goes down or comes back
       const unsubscribeQueue = scanner.onStatusChange?.(send) ?? (() => {});
       const unsubscribeDependencies = dependencies?.onChange(send) ?? (() => {});
       const unsubscribe = () => {

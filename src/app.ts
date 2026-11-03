@@ -30,16 +30,16 @@ export const createApp = (
   ),
 ) =>
   new Elysia()
-    // Check OCR and the LLM in the background while the server listens. app.handle() in tests never starts it
+    // Check OCR and the LLM in the background while the server listens. app.handle() in tests never starts the monitor
     .onStart(() => dependencies.start())
     .onStop(() => dependencies.stop())
     .use(requestLogger(config))
     .use(cors({ origin: config.corsOrigins.map(corsOrigin) }))
-    // Liveness: the process answers. It checks no dependency, so a down LLM never restarts the pod
+    // Liveness probe. It checks no dependency, so a down LLM never restarts the pod
     .get('/livez', () => ({ status: 'ok' }))
     // Same as /livez. The Helm chart probes it today, so it stays dependency free
     .get('/health', () => ({ status: 'ok' }))
-    // Readiness: OCR and the LLM answer, so a scan could succeed now. 503 takes the pod out of the Service
+    // Readiness probe. It answers 503 while OCR or the LLM is down, and Kubernetes then stops routing to the pod
     .get('/readyz', async ({ status }) => {
       const { ready, checks } = await dependencies.check();
       return ready ? { status: 'ok', checks } : status(503, { status: 'unavailable', checks });

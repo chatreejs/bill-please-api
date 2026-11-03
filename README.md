@@ -9,7 +9,9 @@ One server exposes the same receipt scanner in two ways:
 |---|---|---|
 | `POST /api/receipts/scan` | REST, `multipart/form-data` with `image` and `cf-turnstile-response` fields | bill-please web |
 | `/mcp` | [MCP](https://modelcontextprotocol.io) Streamable HTTP, stateless | AI clients such as Claude, ChatGPT and Cursor |
-| `GET /health` | REST | The Docker healthcheck, and bill-please web to enable "Add from bill" |
+| `GET /api/receipts/status` | REST, or Server-Sent Events with `Accept: text/event-stream` | bill-please web, to disable "Add from bill" while the LLM queue is full (`busy`) or OCR or the LLM is down (`available: false`) |
+| `GET /livez`, `GET /health` | REST, checks no dependency | The Docker healthcheck and the Kubernetes liveness probe |
+| `GET /readyz` | REST, 503 while OCR or the LLM is down | The Kubernetes readiness probe |
 
 It runs on [Bun](https://bun.sh) with [ElysiaJS](https://elysiajs.com), the official
 [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and zod.
@@ -24,24 +26,35 @@ flowchart LR
     turnstile["Cloudflare Turnstile<br/>siteverify"]
     ocr["bill-please-ocr<br/>FastAPI + PaddleOCR"]
     llm["llm-server<br/>llama.cpp, OpenAI compatible API"]
+    kube["Kubernetes probes"]
 
-    web -- "POST /api/receipts/scan<br/>GET /health" --> mcp
+    web -- "POST /api/receipts/scan<br/>GET /api/receipts/status (SSE)" --> mcp
     ai -- "/mcp" --> mcp
+    kube -- "GET /livez, GET /readyz" --> mcp
     mcp -- "verify token" --> turnstile
     mcp -- "POST /v1/ocr<br/>photo" --> ocr
     mcp -- "POST /chat/completions<br/>OCR text only" --> llm
+    mcp -. "GET /readyz every 5 s" .-> ocr
+    mcp -. "GET /models every 5 s" .-> llm
 ```
+
+Dotted lines are the dependency checks. When 2 checks in a row fail, the status
+stream sends `available: false`, a scan answers 503 with `code: 'scanner_unavailable'`,
+and `scan_receipt` returns an error. The first good check turns scanning back on.
 
 A scan from the web goes through these steps:
 
-1. bill-please web resizes the photo to a JPEG of at most 1600 px and uploads it
+1. bill-please web keeps the status stream open and enables "Add from bill" only
+   while `busy` is false and `available` is true.
+2. bill-please web resizes the photo to a JPEG of at most 1600 px and uploads it
    with a Turnstile token.
-2. bill-please-mcp checks the Turnstile token with Cloudflare. `/mcp` skips this
-   step and relies on the rate limit.
-3. bill-please-mcp sends the photo to bill-please-ocr and gets back text lines.
-4. bill-please-mcp sends only the OCR text to llm-server, which returns the items
+3. bill-please-mcp answers 503 right away if OCR or the LLM is down. Otherwise it
+   checks the Turnstile token with Cloudflare. `/mcp` skips the Turnstile check
+   and relies on the rate limit.
+4. bill-please-mcp sends the photo to bill-please-ocr and gets back text lines.
+5. bill-please-mcp sends only the OCR text to llm-server, which returns the items
    and the receipt rates.
-5. bill-please-mcp checks the items against the printed total and returns them.
+6. bill-please-mcp checks the items against the printed total and returns them.
 
 ## Response contract
 

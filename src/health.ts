@@ -3,14 +3,14 @@ import { getLogger } from './logger.ts';
 const log = getLogger('health');
 
 // /readyz is public, so concurrent calls share one check and reuse its result this long.
-// Keep it under MONITOR_INTERVAL_MS, so each monitor tick runs a fresh check
+// Keep it under MONITOR_INTERVAL_MS, so each tick of the monitor runs a new check
 const CACHE_MS = 2000;
 
 // How often the monitor checks OCR and the LLM in the background
 export const MONITOR_INTERVAL_MS = 5000;
 
 // Failed checks in a row before scanning counts as unavailable, so one slow answer doesn't
-// disable "Add from bill". With MONITOR_INTERVAL_MS this notices an outage within about 10 s
+// disable "Add from bill". At MONITOR_INTERVAL_MS, the monitor notices an outage within about 10 s
 export const FAILURES_BEFORE_UNAVAILABLE = 2;
 
 export interface DependencyCheck {
@@ -46,7 +46,7 @@ const check = async (
   const elapsedMs = () => Math.round(performance.now() - startedAt);
   try {
     const res = await fetchFn(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
-    // Drain the body so the connection can be released
+    // Only the status matters. Cancel the body so Bun can reuse the connection
     await res.body?.cancel();
     return res.ok
       ? { ok: true, status: res.status, elapsedMs: elapsedMs() }
@@ -57,10 +57,11 @@ const check = async (
 };
 
 /**
- * Checks that a scan could succeed right now: bill-please-ocr `GET /readyz` (200 once its models
- * have loaded) and the LLM's `GET /models`, which any OpenAI compatible API serves and llama.cpp
- * answers with 503 while it loads the model. Concurrent calls share one check, and a result is
- * reused for CACHE_MS, so a flood of /readyz requests never reaches the dependencies.
+ * Checks whether a scan could succeed right now. It calls bill-please-ocr `GET /readyz`, which
+ * answers 200 once the OCR models have loaded, and the LLM's `GET /models`. Every OpenAI compatible
+ * API serves `/models`, and llama.cpp answers it with 503 while it loads the model.
+ * Concurrent calls share one check, and later calls reuse its result for CACHE_MS. Many /readyz
+ * requests at once therefore send at most one request to each dependency.
  */
 export const createReadinessCheck = (
   { ocrUrl, llmUrl, llmApiKey, timeoutMs }: ReadinessOptions,
@@ -93,7 +94,7 @@ export interface DependencyMonitor {
   check(): Promise<Readiness>;
   /** Calls listener each time `available` changes. Returns a function that stops it */
   onChange(listener: AvailabilityListener): () => void;
-  /** Checks now and then every intervalMs, until stop() */
+  /** Runs a check right away, then one every intervalMs until stop() */
   start(): void;
   stop(): void;
 }
@@ -109,7 +110,7 @@ export const createDependencyMonitor = (
 
   const update = (result: Readiness) => {
     failures = result.ready ? 0 : failures + 1;
-    // Recover on the first good check, so the button comes back as soon as it can
+    // One good check is enough to turn available back on, so "Add from bill" returns quickly
     const next = result.ready || (available && failures < failuresBeforeUnavailable);
     if (next === available) return;
     available = next;
