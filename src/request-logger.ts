@@ -9,6 +9,7 @@ const REQUEST_ID_PATTERN = /^[\w-]{1,64}$/;
 
 // Kubernetes liveness/readiness probes and the Docker HEALTHCHECK (wget)
 const PROBE_USER_AGENT = /^(kube-probe|wget)\//i;
+const PROBE_PATHS = new Set(['/health', '/livez', '/readyz']);
 
 /**
  * Client IP, trusting proxy headers only behind our own reverse proxy. Traffic comes through
@@ -66,10 +67,10 @@ export const requestLogger = (config: Config) =>
         userAgent: userAgent || undefined,
       };
 
-      // Infra probes call /health every few seconds, so they log at DEBUG. /health from the web logs at INFO.
+      // Infra probes call /health, /livez and /readyz every few seconds, so they log at DEBUG. Anyone else logs at INFO.
       // Every open web page keeps an /api/receipts/status stream open and reconnects it, so it logs at DEBUG too
       const isProbe = PROBE_USER_AGENT.test(userAgent);
-      const isPoll = (path === '/health' && isProbe) || path === '/api/receipts/status';
+      const isPoll = (PROBE_PATHS.has(path) && isProbe) || path === '/api/receipts/status';
       if (isPoll && status < 400) log.debug(message, fields);
       else if (status >= 500) log.error(message, fields);
       else if (status >= 400) log.warn(message, fields);

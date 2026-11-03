@@ -23,15 +23,17 @@ This is the backend for [bill-please](../bill-please), a client-only React PWA t
 | `POST /api/receipts/scan` | REST, `multipart/form-data`, fields `image` and `cf-turnstile-response`. With `Accept: text/event-stream` it streams progress as Server-Sent Events | bill-please web                              |
 | `/mcp`                    | MCP Streamable HTTP, stateless             | AI clients such as Claude, ChatGPT and Cursor                             |
 | `GET /api/receipts/status` | REST. With `Accept: text/event-stream` it streams each queue change as Server-Sent Events | bill-please web keeps the stream open to enable the "Add from bill" button, `busy` disables it |
-| `GET /health`             | REST                                       | Docker healthcheck and Kubernetes probes |
+| `GET /livez`, `GET /health` | REST, no dependency checks                 | Docker healthcheck and the Kubernetes liveness probe. The Helm chart still probes `/health` for both probes |
+| `GET /readyz`             | REST, 503 when OCR or the LLM is down      | Kubernetes readiness probe |
 
 ## Architecture
 
 ```
 src/
   index.ts            entry point: createApp(config, createScanner(config)).listen()
-  app.ts              Elysia app, in order: requestLogger, cors, /health, rateLimit, receipt routes, mcp routes
+  app.ts              Elysia app, in order: requestLogger, cors, /livez, /health, /readyz, rateLimit, receipt routes, mcp routes
   config.ts           parses Bun.env into the `config` object
+  health.ts           createReadinessCheck(): OCR GET /readyz and LLM GET /models, shared and cached for 5 s
   logger.ts           JSON lines logger: getLogger(name), LOG_LEVEL, logContext (AsyncLocalStorage per request)
   request-logger.ts   Elysia plugin: X-Request-Id, one access log record per request, unhandled errors; clientIp()
   schemas/receipt.ts  zod contract: ReceiptItemSchema, ReceiptScanResultSchema, SUPPORTED_IMAGE_TYPES
@@ -57,6 +59,7 @@ test/scanner.test.ts  OCR and LLM scanner with a stub OCR client and extractor, 
 test/turnstile.test.ts Turnstile on the scan route with a stub siteverify fetch, no network
 test/llm-queue.test.ts the LLM queue, and the 503 and isError answers when it is busy
 test/progress.test.ts scan progress: item counting, the LLM stream and the SSE scan route
+test/health.test.ts   the readiness check with a stub fetch, and the probe routes
 ```
 
 Key points:
@@ -82,11 +85,12 @@ Key points:
   - Every record is one JSON object on one line: `time` (UTC ISO), `level` (lowercase), `service`, `logger`, `requestId` (only inside a request) and `msg`. Plain object arguments are merged into the record as fields. An Error becomes `error: { type, message, stack, cause }`. Any other argument goes into `args`. If a field can't be serialized, it is written as inspected text, so the record is never lost.
   - The request id comes from `logContext`. `onRequest` sets it with `enterWith`, so it follows async calls without being passed around. The server reuses a valid incoming `X-Request-Id` and always sends it back.
   - A scan logs one INFO record per step, with the numbers in fields: `Received receipt image` or `scan_receipt called` (`image`), `Calling OCR` (`ocr.url`), `OCR complete` (`ocr.lines`, `meanConfidence`, `durationMs` inside the OCR service, `elapsedMs` including the upload), `Calling LLM` (`llm.model`, `outputFormat`, `ocrChars`), `LLM complete` (`llm.elapsedMs`, `promptTokens`, `completionTokens`, `finishReason`), the rate fix when `resolveRates` changes anything (`rates.model`, `rates.resolved`), `Extracted N items` (`total`) and `Scan complete` (`scan.items`, `scan.elapsedMs`).
-  - The access log record has the message `METHOD path status Nms` and the fields `http: { method, path, status, durationMs }`, `clientIp` and `userAgent`. 2xx and 3xx log at INFO, 4xx at WARN and 5xx at ERROR. `/health` from infra probes (User-Agent `kube-probe/*` or `Wget/*`) and `/api/receipts/status` log only at DEBUG. `/health` from anything else logs at INFO.
+  - The access log record has the message `METHOD path status Nms` and the fields `http: { method, path, status, durationMs }`, `clientIp` and `userAgent`. 2xx and 3xx log at INFO, 4xx at WARN and 5xx at ERROR. `/health`, `/livez` and `/readyz` from infra probes (User-Agent `kube-probe/*` or `Wget/*`) and `/api/receipts/status` log only at DEBUG, unless they fail. Probe paths from anything else log at INFO.
   - `onRequest` resolves the client IP, because Bun can't see the socket after the response.
   - Never log image bytes or secrets. Tests capture output with `configureLogger({ write })`.
 - **Turnstile.** `POST /api/receipts/scan` checks the single-use `cf-turnstile-response` token from bill-please web with Cloudflare's siteverify before any OCR or LLM work. It sends the client IP from `clientIp()` as `remoteip`. It answers 403 when the token is missing or rejected, the action isn't `receipt_scan`, or the hostname isn't in `TURNSTILE_HOSTNAMES`, and 503 when siteverify can't be reached (fail closed). Results from Cloudflare's test secret keys (`metadata.result_with_testing_key`) skip the action and hostname checks, because they always answer hostname `example.com` and no action. Without `TURNSTILE_SECRET_KEY` the check is off, like the web without `VITE_APP_TURNSTILE_SITE_KEY`. `createApp` takes the verifier as an optional third argument so tests can stub `fetch`. `/mcp` has no Turnstile, because AI clients can't run the widget; only the rate limit covers it.
-- **Rate limiting.** It uses `elysia-rate-limit` v4. v5 needs Elysia 2, which is still in beta, so stay on Elysia 1.4. The limit is in memory per process and skips `/health` and `/api/receipts/status`. When `TRUST_PROXY=true`, the client IP comes from `CF-Connecting-IP`, then the first `X-Forwarded-For` entry. Traffic arrives through a Cloudflare tunnel, and Traefik replaces `X-Forwarded-For` with the cloudflared pod IP, so only `CF-Connecting-IP` has the visitor IP.
+- **Probes.** `/livez` and `/health` always answer `{ status: 'ok' }`, so a down LLM never restarts the pod. `/readyz` calls bill-please-ocr `GET /readyz` and the LLM's `GET /models` in parallel, each with `READINESS_TIMEOUT_MS`, and answers 200 `{ status: 'ok', checks }` or 503 `{ status: 'unavailable', checks: { ocr, llm } }`. Concurrent calls share one check and a result is reused for 5 s, because `/readyz` is public. It logs only when readiness changes. `createApp` takes the check as an optional fourth argument for tests. The rate limit skips all three, and probe user agents log them at DEBUG.
+- **Rate limiting.** It uses `elysia-rate-limit` v4. v5 needs Elysia 2, which is still in beta, so stay on Elysia 1.4. The limit is in memory per process and skips `/health`, `/livez`, `/readyz` and `/api/receipts/status`. When `TRUST_PROXY=true`, the client IP comes from `CF-Connecting-IP`, then the first `X-Forwarded-For` entry. Traffic arrives through a Cloudflare tunnel, and Traefik replaces `X-Forwarded-For` with the cloudflared pod IP, so only `CF-Connecting-IP` has the visitor IP.
 
 ## Contract with bill-please web (keep in sync)
 
@@ -144,16 +148,17 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 | `TURNSTILE_SECRET_KEY` | | Cloudflare Turnstile secret key. Empty turns the check off. For local tests use Cloudflare's test secrets `1x0000000000000000000000000000000AA` (passes) or `2x0000000000000000000000000000000AA` (fails) |
 | `TURNSTILE_HOSTNAMES` | | Comma-separated hostnames a token must come from, for example `bill-please.chatree.dev`. Empty accepts any hostname on the widget |
 | `TURNSTILE_TIMEOUT_MS` | `10000` | Timeout for the siteverify call |
+| `READINESS_TIMEOUT_MS` | `2000` | Timeout for each dependency check of `/readyz`. Keep it under the probe's `timeoutSeconds` |
 | `LOG_LEVEL` | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF` |
 
 ## Deployment
 
-The app runs in the user's k3s cluster. The `Dockerfile` uses `oven/bun:1-alpine`, installs production dependencies only, runs as the non-root `bun` user and has a wget healthcheck. There is no docker-compose, because the user never runs Docker locally and Jenkins builds the images.
+The app runs in the user's k3s cluster. The `Dockerfile` uses `oven/bun:1.4.3-alpine` in both stages, the same tag as `.tool-versions` and the CI Test stage, installs production dependencies only, runs as the non-root `bun` user and has a wget healthcheck on `/livez`. There is no docker-compose, because the user never runs Docker locally and Jenkins builds the images.
 
 The Jenkins pipeline in `ci/Jenkinsfile` is copied from `../passwords`. Its stages run in this order:
 
 1. Prepare Env reads the version from package.json. On `develop` it becomes `X.Y.Z-develop.<date>.<build>`.
-2. Test runs check-types and the tests with lcov coverage in `oven/bun:1.4.3-alpine`. Keep that tag in sync with `.tool-versions`.
+2. Test runs check-types and the tests with lcov coverage in `oven/bun:1.4.3-alpine`. Keep that tag in sync with `.tool-versions` and the `Dockerfile`.
 3. SonarQube scans with `sonar-project.properties`.
 4. It builds the Docker image, scans it with Trivy and pushes `chatreejs/bill-please-mcp` to Docker Hub.
 5. It triggers the gitops job `chatreejs/gitops/bill-please-backend-manifest-{dev,prod}` with the parameter `MCP_IMAGE_TAG`, then notifies Discord.
@@ -171,12 +176,12 @@ CI is Jenkins only. SonarQube covers static analysis, so there is no GitHub Acti
 
 ## Status and roadmap
 
-Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, the LLM queue, the status endpoint, streamed scan progress, tests (71 passing), the Dockerfile and the web integration.
+Done: REST and MCP endpoints, the OCR and LLM scanner, the zod contract, CORS, rate limiting, Turnstile on the REST scan, JSON logging with request ids, graceful SIGTERM shutdown, the LLM queue, the status endpoint, streamed scan progress, tests (82 passing), `/livez` and `/readyz` probes, the Dockerfile and the web integration.
 
 Likely next steps:
 
 1. Code work happens on `develop`, with `git@github.com:chatreejs/bill-please-mcp` as the remote. Add commitlint and husky like bill-please, for Conventional Commits with a lowercase subject.
-2. Finish the scanner: test it on real receipts, a `/livez` probe and a dependency-aware `/health`, and maybe a cloud fallback. The user hasn't chosen a cloud provider.
+2. Point the Helm chart's liveness probe at `/livez` and its readiness probe at `/readyz` with `timeoutSeconds: 3`. Finish the scanner: test it on real receipts, and maybe a cloud fallback. The user hasn't chosen a cloud provider.
 3. Add auth on `/mcp`, an API key or OAuth, before exposing a paid model publicly.
 4. Use a shared rate-limit store if the server runs as several replicas.
 5. A possible future MCP tool could create a bill-please bill from the items and return a link that opens the web app pre-filled. That needs an import-from-URL feature in bill-please web, which only uses localStorage today.

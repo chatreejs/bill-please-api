@@ -46,6 +46,8 @@ export const config = {
   turnstileSecretKey: Bun.env.TURNSTILE_SECRET_KEY || undefined,
   turnstileHostnames: list(Bun.env.TURNSTILE_HOSTNAMES),
   turnstileTimeoutMs: int(Bun.env.TURNSTILE_TIMEOUT_MS, 10000),
+  // Timeout for each dependency check of GET /readyz. Keep it under the probe's timeoutSeconds
+  readinessTimeoutMs: int(Bun.env.READINESS_TIMEOUT_MS, 2000),
   logLevel: parseLogLevel(Bun.env.LOG_LEVEL),
 };
 
