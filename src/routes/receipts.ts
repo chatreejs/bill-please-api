@@ -16,7 +16,7 @@ import { RECEIPT_SCAN_ACTION, type TurnstileVerifier } from '../turnstile.ts';
 
 const log = getLogger('receipts.route');
 
-// One scan takes about this long on the T400
+// One scan takes about this long on the cluster's llm-server
 const RETRY_AFTER_SECONDS = 15;
 
 // The dependency monitor checks every 5 s, so ask a client to retry after a few checks

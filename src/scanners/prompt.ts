@@ -1,4 +1,4 @@
-// Prompt eval runs at about 65 tokens/s on the T400, so keep this short.
+// Prompt eval runs at about 65 tokens/s on the cluster's llm-server, so keep this short.
 export const SYSTEM_PROMPT = `You read OCR text of a restaurant receipt (Thai or English) and return JSON.
 OCR keeps the columns, but a label can land on the line before or after its amount.
 

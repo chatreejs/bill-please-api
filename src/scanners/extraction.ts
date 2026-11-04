@@ -4,7 +4,7 @@ import { ITEM_CATEGORIES } from '../schemas/receipt.ts';
 
 /**
  * What the LLM returns. It is smaller than the client contract to save tokens,
- * because generation speed is the bottleneck on the T400. `toReceiptItems` maps it.
+ * because generation speed is the bottleneck on a small GPU. `toReceiptItems` maps it.
  *
  * Each item is [name, quantity, line amount as printed, category]. The name has OCR errors
  * fixed. Service charge and VAT are
@@ -40,7 +40,7 @@ export const extractionJsonSchema = dropBooleanItems(z.toJSONSchema(ExtractionSc
 /**
  * The same shape as a llama.cpp GBNF grammar, sent in place of json_schema when
  * LLM_OUTPUT_FORMAT is gbnf. Under json_schema the model adds newlines and indentation and
- * writes 120.00 for 120, and Qwen spends a token on each digit and space run. On the T400 this
+ * writes 120.00 for 120, and Qwen spends a token on each digit and space run. On the cluster's llm-server this
  * grammar cut the output on bill-3 (15 items) from 398 to 337 tokens, and the scan from 22.7 s
  * to 19.5 s. Numbers have at most 7 integer digits and 2 decimals, so the model can't write
  * 338.00000000000006. A rule that forbade a trailing zero made the model write 338.01 for 338.00.
