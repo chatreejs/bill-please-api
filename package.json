@@ -14,7 +14,7 @@
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
     "elysia": "^1.4.30",
-    "elysia-rate-limit": "^4.6.3",
+    "elysia-rate-limit": "^5.1.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
