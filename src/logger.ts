@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 /**
  * Minimal JSON logger. Every record is one JSON object on one line:
- *   {"time":"2026-10-30T14:03:12.345Z","level":"info","service":"bill-please-mcp","logger":"receipts.route","requestId":"9f2c1a7e","msg":"Scanned receipt with 4 items"}
+ *   {"time":"2026-10-30T14:03:12.345Z","level":"info","service":"bill-please-api","logger":"receipts.route","requestId":"9f2c1a7e","msg":"Scanned receipt with 4 items"}
  * Plain object arguments become fields of the record, and an Error becomes the `error` field.
  */
 
@@ -32,7 +32,7 @@ const defaultWrite = (line: string, level: LogLevel) => {
 
 const options: LoggerOptions = {
   level: 'INFO',
-  service: 'bill-please-mcp',
+  service: 'bill-please-api',
   write: defaultWrite,
 };
 

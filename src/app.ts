@@ -4,7 +4,6 @@ import { rateLimit } from 'elysia-rate-limit';
 
 import { type Config, corsOrigin } from './config.ts';
 import { createDependencyMonitor, createReadinessCheck, type DependencyMonitor } from './health.ts';
-import { mcpRoutes } from './mcp/route.ts';
 import { clientIp, requestLogger } from './request-logger.ts';
 import { receiptRoutes } from './routes/receipts.ts';
 import type { ReceiptScanner } from './scanners/index.ts';
@@ -53,5 +52,4 @@ export const createApp = (
         generator: (request, server) => clientIp(request, server, config.trustProxy),
       }),
     )
-    .use(receiptRoutes(config, scanner, dependencies, verifyTurnstile))
-    .use(mcpRoutes(config, scanner, dependencies));
+    .use(receiptRoutes(config, scanner, dependencies, verifyTurnstile));

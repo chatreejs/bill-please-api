@@ -1,46 +1,42 @@
 <h1 align="center">
-  <p align="center">Bill-Please MCP</p>
+  <p align="center">Bill-Please API</p>
 </h1>
 
 Receipt scanning backend for [Bill Please](https://github.com/chatreejs/bill-please).
-One server exposes the same receipt scanner in two ways:
+It exposes the receipt scanner as a REST API:
 
 | Endpoint | Protocol | Used by |
 |---|---|---|
 | `POST /api/receipts/scan` | REST, `multipart/form-data` with `image` and `cf-turnstile-response` fields | bill-please web |
-| `/mcp` | [MCP](https://modelcontextprotocol.io) Streamable HTTP, stateless | AI clients such as Claude, ChatGPT and Cursor |
 | `GET /api/receipts/status` | REST, or Server-Sent Events with `Accept: text/event-stream` | bill-please web, to disable "Add from bill" while the LLM queue is full (`busy`) or OCR or the LLM is down (`available: false`) |
 | `GET /livez`, `GET /health` | REST, checks no dependency | The Docker healthcheck and the Kubernetes liveness probe |
 | `GET /readyz` | REST, 503 while OCR or the LLM is down | The Kubernetes readiness probe |
 
-It runs on [Bun](https://bun.sh) with [ElysiaJS](https://elysiajs.com), the official
-[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk) and zod.
+It runs on [Bun](https://bun.sh) with [ElysiaJS](https://elysiajs.com) and zod.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     web["bill-please web<br/>React PWA"]
-    ai["AI clients<br/>Claude, ChatGPT, Cursor"]
-    mcp["bill-please-mcp<br/>Bun + Elysia"]
+    api["bill-please-api<br/>Bun + Elysia"]
     turnstile["Cloudflare Turnstile<br/>siteverify"]
     ocr["bill-please-ocr<br/>FastAPI + PaddleOCR"]
     llm["llm-server<br/>llama.cpp, OpenAI compatible API"]
     kube["Kubernetes probes"]
 
-    web -- "POST /api/receipts/scan<br/>GET /api/receipts/status (SSE)" --> mcp
-    ai -- "/mcp" --> mcp
-    kube -- "GET /livez, GET /readyz" --> mcp
-    mcp -- "verify token" --> turnstile
-    mcp -- "POST /v1/ocr<br/>photo" --> ocr
-    mcp -- "POST /chat/completions<br/>OCR text only" --> llm
-    mcp -. "GET /readyz every 5 s" .-> ocr
-    mcp -. "GET /models every 5 s" .-> llm
+    web -- "POST /api/receipts/scan<br/>GET /api/receipts/status (SSE)" --> api
+    kube -- "GET /livez, GET /readyz" --> api
+    api -- "verify token" --> turnstile
+    api -- "POST /v1/ocr<br/>photo" --> ocr
+    api -- "POST /chat/completions<br/>OCR text only" --> llm
+    api -. "GET /readyz every 5 s" .-> ocr
+    api -. "GET /models every 5 s" .-> llm
 ```
 
 Dotted lines are the dependency checks. When 2 checks in a row fail, the status
-stream sends `available: false`, a scan answers 503 with `code: 'scanner_unavailable'`,
-and `scan_receipt` returns an error. The first good check turns scanning back on.
+stream sends `available: false` and a scan answers 503 with
+`code: 'scanner_unavailable'`. The first good check turns scanning back on.
 
 A scan from the web goes through these steps:
 
@@ -48,18 +44,16 @@ A scan from the web goes through these steps:
    while `busy` is false and `available` is true.
 2. bill-please web resizes the photo to a JPEG of at most 1600 px and uploads it
    with a Turnstile token.
-3. bill-please-mcp answers 503 right away if OCR or the LLM is down. Otherwise it
-   checks the Turnstile token with Cloudflare. `/mcp` skips the Turnstile check
-   and relies on the rate limit.
-4. bill-please-mcp sends the photo to bill-please-ocr and gets back text lines.
-5. bill-please-mcp sends only the OCR text to llm-server, which returns the items
+3. bill-please-api answers 503 right away if OCR or the LLM is down. Otherwise it
+   checks the Turnstile token with Cloudflare.
+4. bill-please-api sends the photo to bill-please-ocr and gets back text lines.
+5. bill-please-api sends only the OCR text to llm-server, which returns the items
    and the receipt rates.
-6. bill-please-mcp checks the items against the printed total and returns them.
+6. bill-please-api checks the items against the printed total and returns them.
 
 ## Response contract
 
-Both endpoints return the same JSON, which matches `IReceiptScanResult` in bill-please web.
-MCP returns it as `structuredContent`.
+The scan returns this JSON, which matches `IReceiptScanResult` in bill-please web.
 
 ```json
 {
@@ -90,9 +84,6 @@ Try the REST endpoint:
 ```bash
 curl -F image=@receipt.jpg http://localhost:3001/api/receipts/scan
 ```
-
-To try the MCP endpoint, run the MCP Inspector with `bun run inspect`. Choose the
-Streamable HTTP transport and the URL `http://localhost:3001/mcp`.
 
 ## Scanner
 
@@ -128,7 +119,7 @@ only from those sites. Without a secret key the check is off. The server answers
 Logs are JSON lines, one object per record, for Loki or any log collector:
 
 ```json
-{"time":"2026-10-30T15:34:11.908Z","level":"info","service":"bill-please-mcp","logger":"http.access","requestId":"982c4a53","msg":"GET /health 200 3ms","http":{"method":"GET","path":"/health","status":200,"durationMs":3},"clientIp":"::1","userAgent":"Mozilla/5.0"}
+{"time":"2026-10-30T15:34:11.908Z","level":"info","service":"bill-please-api","logger":"http.access","requestId":"982c4a53","msg":"GET /health 200 3ms","http":{"method":"GET","path":"/health","status":200,"durationMs":3},"clientIp":"::1","userAgent":"Mozilla/5.0"}
 ```
 
 The logger writes an error as an `error` field with `type`, `message`, `stack` and `cause`.
@@ -145,23 +136,16 @@ tests, scans with SonarQube, builds the image, scans it with Trivy, pushes it an
 triggers the GitOps deploy. To run the image by hand:
 
 ```bash
-docker build -t bill-please-mcp .
-docker run -d -p 3001:3001 --env-file .env bill-please-mcp
+docker build -t bill-please-api .
+docker run -d -p 3001:3001 --env-file .env bill-please-api
 ```
 
 Behind a reverse proxy, set `TRUST_PROXY=true` so rate limiting and the access log use
 the client IP from `CF-Connecting-IP`, or else the first `X-Forwarded-For` entry.
 
-## MCP tools
-
-| Tool | Input | Output |
-|---|---|---|
-| `scan_receipt` | `imageBase64`, `mimeType` | `{ items: ReceiptItem[] }` |
-
 ## Security notes
 
-- `/mcp` has no authentication yet. Add an API key or OAuth before you expose a
-  paid model.
+- Set `TURNSTILE_SECRET_KEY` before you expose the scan endpoint with a paid model.
 - Each process keeps its own in-memory rate limit. Use a shared store if you run
   several replicas.
 
@@ -171,9 +155,9 @@ Report vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).
 
 Yes.
 
-- [Star the repo](https://github.com/chatreejs/bill-please-mcp).
-- [Report a bug](https://github.com/chatreejs/bill-please-mcp/issues) if something doesn't work.
-- [Suggest a feature](https://github.com/chatreejs/bill-please-mcp/issues).
+- [Star the repo](https://github.com/chatreejs/bill-please-api).
+- [Report a bug](https://github.com/chatreejs/bill-please-api/issues) if something doesn't work.
+- [Suggest a feature](https://github.com/chatreejs/bill-please-api/issues).
 - [Join our Discord server](https://discord.gg/HdknCHG7Rr) for less formal discussion.
 
 Please read the [contributing guidelines](./CONTRIBUTING.md) and follow the

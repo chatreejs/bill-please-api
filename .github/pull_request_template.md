@@ -12,7 +12,7 @@
 
 ## How to test
 
-<!-- Steps, curl/MCP Inspector requests or screenshots that show your changes work -->
+<!-- Steps, curl requests or screenshots that show your changes work -->
 
 - [ ] `bun test` passes
 - [ ] `bun run check-types` passes

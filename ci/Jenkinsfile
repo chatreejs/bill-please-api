@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   environment {
-    IMAGE_URL = "chatreejs/bill-please-mcp"
+    IMAGE_URL = "chatreejs/bill-please-api"
   }
 
   stages {
@@ -120,7 +120,7 @@ pipeline {
     // The manifest repo bill-please-backend also deploys bill-please-ocr, which sets OCR_IMAGE_TAG
     stage('Deploy to Kubernetes') {
       steps {
-        build job: "${DEPLOY_JOB}", parameters: [string(name: 'MCP_IMAGE_TAG', value: "${BUILD_VERSION}")]
+        build job: "${DEPLOY_JOB}", parameters: [string(name: 'API_IMAGE_TAG', value: "${BUILD_VERSION}")]
       }
     }
   }

@@ -1,5 +1,5 @@
 name: Feature Request 💡
-description: Have any new idea or new feature for Bill Please MCP? Please suggest!
+description: Have any new idea or new feature for Bill Please API? Please suggest!
 title: '[Feature] <write a small description here>'
 labels: ['enhancement', 'goal: addition', 'priority: high']
 body:
@@ -24,7 +24,7 @@ body:
       options:
         - label: 'I have checked the existing issues'
           required: true
-        - label: 'I have read the [Contributing Guidelines](https://github.com/chatreejs/bill-please-mcp/blob/main/CONTRIBUTING.md)'
+        - label: 'I have read the [Contributing Guidelines](https://github.com/chatreejs/bill-please-api/blob/main/CONTRIBUTING.md)'
           required: true
         - label: 'I am willing to work on this issue (optional)'
           required: false

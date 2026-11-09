@@ -326,7 +326,7 @@ describe('OcrLlmReceiptScanner', () => {
     await expect(scanner.scan(image)).rejects.toBeInstanceOf(UnreadableReceiptError);
   });
 
-  it('answers 422 on REST and a friendly tool error on MCP', async () => {
+  it('answers 422 on REST', async () => {
     const app = createApp(
       { ...config, rateLimitPerMinute: 1000, turnstileSecretKey: undefined },
       new OcrLlmReceiptScanner(stubOcr(ocrResult('')), new StubExtractor(extraction), 0.6),
@@ -337,21 +337,5 @@ describe('OcrLlmReceiptScanner', () => {
       new Request('http://localhost/api/receipts/scan', { method: 'POST', body: form }),
     );
     expect(res.status).toBe(422);
-
-    const mcp = await app.handle(
-      new Request('http://localhost/mcp', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: { name: 'scan_receipt', arguments: { imageBase64: 'AQ==', mimeType: 'image/jpeg' } },
-        }),
-      }),
-    );
-    const body = (await mcp.json()) as { result: { isError: boolean; content: { text: string }[] } };
-    expect(body.result.isError).toBe(true);
-    expect(body.result.content[0]!.text).toContain('No receipt text found');
   });
 });

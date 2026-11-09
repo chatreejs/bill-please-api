@@ -17,7 +17,7 @@ describe('logger', () => {
     expect(record).toEqual({
       time: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
       level: 'info',
-      service: 'bill-please-mcp',
+      service: 'bill-please-api',
       logger: 'test.logger',
       msg: 'hello',
       a: 1,

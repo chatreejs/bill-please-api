@@ -1,4 +1,4 @@
-# Bill Please MCP Contributing Guidelines
+# Bill Please API Contributing Guidelines
 
 Thank you for taking the time to contribute to our project. Please take a moment to read the following guidelines before contributing:
 
@@ -19,25 +19,25 @@ Thank you for taking the time to contribute to our project. Please take a moment
 
 ## How to Contribute 🤔
 
-To get started, look at the existing [**Issues**](https://github.com/chatreejs/bill-please-mcp/issues) or [**create a new issue**](https://github.com/chatreejs/bill-please-mcp/issues/new/choose)!
+To get started, look at the existing [**Issues**](https://github.com/chatreejs/bill-please-api/issues) or [**create a new issue**](https://github.com/chatreejs/bill-please-api/issues/new/choose)!
 
 Issues about the web app itself (UI, bill calculation, translations) belong in [bill-please](https://github.com/chatreejs/bill-please/issues).
 
 ### Setup guidelines 🪜
 
-Follow these steps to set up Bill Please MCP on your local machine
+Follow these steps to set up Bill Please API on your local machine
 
-1. [Fork](https://github.com/chatreejs/bill-please-mcp/fork) the project
+1. [Fork](https://github.com/chatreejs/bill-please-api/fork) the project
 2. Clone the project to run on your local machine using the following command:
 
    ```sh
-   git clone https://github.com/<your_github_username>/bill-please-mcp.git
+   git clone https://github.com/<your_github_username>/bill-please-api.git
    ```
 
 3. Get into the root directory
 
    ```sh
-   cd bill-please-mcp
+   cd bill-please-api
    ```
 
 4. Install all dependencies and create your local config
@@ -84,7 +84,7 @@ Follow these steps to set up Bill Please MCP on your local machine
     git push origin "<your_branch_name>"
     ```
 
-11. Create a [PULL REQUEST](https://github.com/chatreejs/bill-please-mcp/compare) 💣
+11. Create a [PULL REQUEST](https://github.com/chatreejs/bill-please-api/compare) 💣
 
     > Click _compare across forks_ if you don't see your branch
 
@@ -103,7 +103,7 @@ Follow these steps to set up Bill Please MCP on your local machine
 
 ## Issues 🎃
 
-- Select an issue template from the [issues](https://github.com/chatreejs/bill-please-mcp/issues/new/choose) tab. Otherwise, choose **Other** if it doesn't match what you're looking for.
+- Select an issue template from the [issues](https://github.com/chatreejs/bill-please-api/issues/new/choose) tab. Otherwise, choose **Other** if it doesn't match what you're looking for.
 - When creating an issue, make sure you fill up all the fields properly.
 - Make sure that you are NOT raising a **duplicate issue**.
 - **Note:** If you aren't the owner of the issue, please comment that you're willing to work on the issue and wait for maintainers to assign you the issue. Also, don't work on the issue if you're NOT assigned.
@@ -129,7 +129,7 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org) format
    - `test`: Adding or improving tests.
    - `chore`: General maintenance tasks, build changes, etc.
 
-2. **Scope** (Optional): The scope provides context for the commit, indicating the specific part of the project being affected. Use a short description in lowercase (e.g., `mcp`, `scanner`, `docker`).
+2. **Scope** (Optional): The scope provides context for the commit, indicating the specific part of the project being affected. Use a short description in lowercase (e.g., `receipts`, `scanner`, `docker`).
 
 3. **Description**: A brief and meaningful description of the changes made. Start with a capital letter and use the imperative mood (e.g., "Add new feature" instead of "Added new feature").
 
@@ -138,7 +138,7 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org) format
 #### ✔️ Examples of Valid Commit Messages
 
 - `feat(scanner): Add Gemini vision scanner`
-- `fix(mcp): Return isError when the image is too large`
+- `fix(receipts): Answer 413 when the image is too large`
 - `docs: Update Docker instructions`
 - `test: Add tests for the rate limiter`
 - `chore: Update dependencies to latest versions`
@@ -171,6 +171,6 @@ We follow the [Conventional Commits](https://www.conventionalcommits.org) format
 
 ## Remarks ✅
 
-- If something is missing here, or you feel something is not well described, either create a PR, [raise an issue](https://github.com/chatreejs/bill-please-mcp/issues), or [do a code review of the person’s PR](https://www.freecodecamp.org/news/code-review-tips/) (ensure that your review conforms to the [Code of Conduct](./CODE_OF_CONDUCT.md)).
+- If something is missing here, or you feel something is not well described, either create a PR, [raise an issue](https://github.com/chatreejs/bill-please-api/issues), or [do a code review of the person’s PR](https://www.freecodecamp.org/news/code-review-tips/) (ensure that your review conforms to the [Code of Conduct](./CODE_OF_CONDUCT.md)).
 
 - By contributing, you agree that your contributions will be licensed under the [AGPL-3.0 License](./LICENSE).

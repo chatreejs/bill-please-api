@@ -9,10 +9,10 @@ const log = getLogger('main');
 const app = createApp(config, createScanner(config)).listen(config.port);
 
 log.info(
-  `Started bill-please-mcp on port ${app.server?.port} ` +
+  `Started bill-please-api on port ${app.server?.port} ` +
     `(ocr=${config.ocrUrl}, llm=${config.llmModel}, logLevel=${config.logLevel}, bun=${Bun.version})`,
 );
-log.info('REST: POST /api/receipts/scan, MCP: /mcp (Streamable HTTP), health: GET /health');
+log.info('REST: POST /api/receipts/scan, GET /api/receipts/status, probes: GET /livez, GET /readyz');
 log.debug(`CORS origins: ${config.corsOrigins.join(', ')}`);
 
 const shutdown = (signal: string) => {

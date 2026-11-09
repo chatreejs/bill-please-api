@@ -27,16 +27,16 @@ body:
       label: Where are you seeing the problem?
       multiple: true
       options:
-        - REST API (/api/receipts/scan)
-        - MCP server (/mcp)
-        - Health check (/health)
+        - Receipt scan (/api/receipts/scan)
+        - Scanner status (/api/receipts/status)
+        - Health checks (/livez, /health, /readyz)
         - Docker image / deployment
         - Other
   - type: input
     id: client
     attributes:
       label: Client
-      description: Which client did you use? (e.g. bill-please web, Claude, Cursor, MCP Inspector, curl)
+      description: Which client did you use? (e.g. bill-please web, curl)
     validations:
       required: false
   - type: checkboxes
@@ -46,7 +46,7 @@ body:
       options:
         - label: 'I have checked the existing issues'
           required: true
-        - label: 'I have read the [Contributing Guidelines](https://github.com/chatreejs/bill-please-mcp/blob/main/CONTRIBUTING.md)'
+        - label: 'I have read the [Contributing Guidelines](https://github.com/chatreejs/bill-please-api/blob/main/CONTRIBUTING.md)'
           required: true
         - label: 'I am willing to work on this issue (optional)'
           required: false

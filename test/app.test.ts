@@ -36,18 +36,6 @@ const scan = (file: File, target = app) => {
   );
 };
 
-const mcp = (method: string, params: unknown = {}) =>
-  app.handle(
-    new Request('http://localhost/mcp', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    }),
-  );
-
 describe('REST /api/receipts/scan', () => {
   it('returns receipt items', async () => {
     const res = await scan(png);
@@ -138,37 +126,6 @@ describe('clientIp', () => {
 
   it('ignores proxy headers when TRUST_PROXY is off', () => {
     expect(clientIp(request({ 'cf-connecting-ip': '203.0.113.7' }), server, false)).toBe('10.42.2.217');
-  });
-});
-
-describe('MCP /mcp', () => {
-  it('initializes', async () => {
-    const res = await mcp('initialize', {
-      protocolVersion: '2025-06-18',
-      capabilities: {},
-      clientInfo: { name: 'test', version: '0.0.0' },
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { result: { serverInfo: { name: string } } };
-    expect(body.result.serverInfo.name).toBe('bill-please');
-  });
-
-  it('lists the scan_receipt tool', async () => {
-    const body = (await (await mcp('tools/list')).json()) as {
-      result: { tools: { name: string }[] };
-    };
-    expect(body.result.tools.map((tool) => tool.name)).toContain('scan_receipt');
-  });
-
-  it('scans a receipt via tools/call', async () => {
-    const body = (await (
-      await mcp('tools/call', {
-        name: 'scan_receipt',
-        arguments: { imageBase64: Buffer.from('fake').toString('base64'), mimeType: 'image/png' },
-      })
-    ).json()) as { result: { isError?: boolean; structuredContent: { items: unknown[] } } };
-    expect(body.result.isError).toBeFalsy();
-    expect(body.result.structuredContent.items.length).toBeGreaterThan(0);
   });
 });
 
