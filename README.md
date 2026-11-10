@@ -16,25 +16,12 @@ It runs on [Bun](https://bun.sh) with [ElysiaJS](https://elysiajs.com) and zod.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    web["bill-please web<br/>React PWA"]
-    api["bill-please-api<br/>Bun + Elysia"]
-    turnstile["Cloudflare Turnstile<br/>siteverify"]
-    ocr["bill-please-ocr<br/>FastAPI + PaddleOCR"]
-    llm["llm-server<br/>llama.cpp, OpenAI compatible API"]
-    kube["Kubernetes probes"]
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture-dark.svg">
+  <img alt="bill-please web calls bill-please-api, which checks Turnstile, sends the photo to bill-please-ocr and the OCR text to llm-server" src=".github/assets/architecture.svg">
+</picture>
 
-    web -- "POST /api/receipts/scan<br/>GET /api/receipts/status (SSE)" --> api
-    kube -- "GET /livez, GET /readyz" --> api
-    api -- "verify token" --> turnstile
-    api -- "POST /v1/ocr<br/>photo" --> ocr
-    api -- "POST /chat/completions<br/>OCR text only" --> llm
-    api -. "GET /readyz every 5 s" .-> ocr
-    api -. "GET /models every 5 s" .-> llm
-```
-
-Dotted lines are the dependency checks. When 2 checks in a row fail, the status
+Dashed lines are the dependency checks. When 2 checks in a row fail, the status
 stream sends `available: false` and a scan answers 503 with
 `code: 'scanner_unavailable'`. The first good check turns scanning back on.
 
