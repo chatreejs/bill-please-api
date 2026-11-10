@@ -2,6 +2,7 @@ version: 2
 updates:
   # Update Bun dependencies
   - package-ecosystem: 'bun'
+    target-branch: 'develop'
     labels:
       - 📦 dependencies
     directory: '/'
@@ -12,6 +13,7 @@ updates:
 
   # Update the Docker base image
   - package-ecosystem: 'docker'
+    target-branch: 'develop'
     labels:
       - 📦 dependencies
     directory: '/'
