@@ -20,7 +20,8 @@ export const meanConfidence = (lines: OcrResult['lines']) =>
   lines.length ? lines.reduce((sum, line) => sum + line.confidence, 0) / lines.length : 0;
 
 export interface OcrClient {
-  recognize(image: ReceiptImage): Promise<OcrResult>;
+  /** `signal` aborts the OCR call, for example when the client cancels the scan */
+  recognize(image: ReceiptImage, signal?: AbortSignal): Promise<OcrResult>;
 }
 
 /** Client for bill-please-ocr `POST /v1/ocr` */
@@ -30,7 +31,7 @@ export class HttpOcrClient implements OcrClient {
     private readonly timeoutMs: number,
   ) {}
 
-  async recognize(image: ReceiptImage): Promise<OcrResult> {
+  async recognize(image: ReceiptImage, signal?: AbortSignal): Promise<OcrResult> {
     const form = new FormData();
     form.append('image', new Blob([image.data], { type: image.mimeType }), 'receipt');
 
@@ -41,7 +42,9 @@ export class HttpOcrClient implements OcrClient {
       method: 'POST',
       body: form,
       headers: requestId ? { 'x-request-id': requestId } : {},
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
+        : AbortSignal.timeout(this.timeoutMs),
     });
 
     if (res.status === 422) {

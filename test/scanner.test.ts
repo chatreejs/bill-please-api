@@ -9,7 +9,7 @@ import type { Extraction } from '../src/scanners/extraction.ts';
 import { extractionGrammar, extractionJsonSchema } from '../src/scanners/extraction.ts';
 import { OcrLlmReceiptScanner } from '../src/scanners/ocr-llm-scanner.ts';
 import { OpenAiCompatibleExtractor, type ReceiptExtractor } from '../src/scanners/llm-client.ts';
-import type { OcrClient, OcrResult } from '../src/scanners/ocr-client.ts';
+import { HttpOcrClient, type OcrClient, type OcrResult } from '../src/scanners/ocr-client.ts';
 import { reconcile, resolveRates, toReceiptItems } from '../src/scanners/postprocess.ts';
 
 let logs: string[] = [];
@@ -337,5 +337,56 @@ describe('OcrLlmReceiptScanner', () => {
       new Request('http://localhost/api/receipts/scan', { method: 'POST', body: form }),
     );
     expect(res.status).toBe(422);
+  });
+});
+
+describe('cancelling a scan', () => {
+  it('aborts the OCR call and never calls the LLM', async () => {
+    let ocrSignal: AbortSignal | undefined;
+    const ocr: OcrClient = {
+      recognize: (_image, signal) =>
+        new Promise((_resolve, reject) => {
+          ocrSignal = signal;
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }),
+    };
+    const extractor = new StubExtractor(extraction);
+    const controller = new AbortController();
+    const scan = new OcrLlmReceiptScanner(ocr, extractor, 0.6).scan(image, { signal: controller.signal });
+
+    controller.abort(new Error('client went away'));
+    await expect(scan).rejects.toThrow('client went away');
+    expect(ocrSignal?.aborted).toBe(true);
+    expect(extractor.calls).toEqual([]);
+  });
+
+  it('skips the LLM when the client cancels as OCR finishes', async () => {
+    const controller = new AbortController();
+    const ocr: OcrClient = {
+      recognize: async () => {
+        controller.abort(new Error('client went away'));
+        return ocrResult(RECEIPT_TEXT);
+      },
+    };
+    const extractor = new StubExtractor(extraction);
+    const scan = new OcrLlmReceiptScanner(ocr, extractor, 0.6).scan(image, { signal: controller.signal });
+
+    await expect(scan).rejects.toThrow('client went away');
+    expect(extractor.calls).toEqual([]);
+  });
+
+  it('passes the signal to the OCR fetch', async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Promise<Response>(() => {}),
+    });
+    try {
+      const controller = new AbortController();
+      const call = new HttpOcrClient(`http://localhost:${server.port}`, 10_000).recognize(image, controller.signal);
+      setTimeout(() => controller.abort(new Error('client went away')), 20);
+      await expect(call).rejects.toThrow('client went away');
+    } finally {
+      server.stop(true);
+    }
   });
 });
