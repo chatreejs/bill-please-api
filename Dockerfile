@@ -1,10 +1,10 @@
 # Keep the tag in sync with .tool-versions and the Test stage of ci/Jenkinsfile
-FROM oven/bun:1.4.3-alpine AS deps
+FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
-FROM oven/bun:1.4.3-alpine
+FROM oven/bun:1.4.4-alpine
 WORKDIR /app
 ENV NODE_ENV=production PORT=3001
 COPY --from=deps /app/node_modules ./node_modules
