@@ -1,126 +1,153 @@
+// Runs as a Jenkins Multibranch Pipeline, which sets BRANCH_NAME and, for a pull request, CHANGE_ID.
+//
+// - A pull request runs the tests, builds the image and scans it, then stops. Nothing is pushed or deployed.
+// - main pushes the image, deploys it to dev, and then waits for someone to click Promote, which
+//   deploys the same image to prod. Nothing is rebuilt for prod.
 pipeline {
-  agent any
+  // Only the Build stage takes an executor, so a build waiting for Promote doesn't hold one
+  agent none
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
 
   environment {
     IMAGE_URL = "chatreejs/bill-please-api"
+    DEV_DEPLOY_JOB = 'chatreejs/gitops/bill-please-backend-manifest-dev'
+    PROD_DEPLOY_JOB = 'chatreejs/gitops/bill-please-backend-manifest-prod'
   }
 
   stages {
-    stage('Prepare Env') {
-      steps {
-        script {
-          // Derive the version from package.json instead of hardcoding it.
-          // Extracted with grep/sed so we don't depend on the Pipeline Utility
-          // Steps plugin (readJSON) or on bun being present on the agent.
-          env.VERSION = sh(
-            returnStdout: true,
-            script: '''grep '"version"' package.json | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/' '''
-          ).trim()
+    stage('Build') {
+      agent any
 
-          // BRANCH_NAME is only set on Multibranch Pipeline jobs; on a plain
-          // Pipeline job it is null, so fall back to GIT_BRANCH (e.g.
-          // "origin/develop") or ask git directly. Strip any remote prefix.
-          env.GIT_REF = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: sh(
-            returnStdout: true,
-            script: 'git rev-parse --abbrev-ref HEAD'
-          ).trim()).replaceFirst(/^origin\//, '')
+      stages {
+        stage('Prepare Env') {
+          steps {
+            script {
+              // Read the version from package.json with grep and sed, so the agent needs neither bun
+              // nor the Pipeline Utility Steps plugin
+              env.VERSION = sh(
+                returnStdout: true,
+                script: '''grep '"version"' package.json | head -1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/' '''
+              ).trim()
 
-          // On develop, publish a pre-release build; on main/master, publish the release version.
-          if (env.GIT_REF == 'develop') {
-            def now = new Date()
-            env.BUILD_DATE = now.format("yyyyMMdd")
-            env.BUILD_VERSION = "${VERSION}-develop.${BUILD_DATE}.${BUILD_NUMBER}"
-            env.DEPLOY_JOB = 'chatreejs/gitops/bill-please-backend-manifest-dev'
-          } else {
-            env.BUILD_VERSION = "${VERSION}"
-            env.DEPLOY_JOB = 'chatreejs/gitops/bill-please-backend-manifest-prod'
+              // Each main build gets its own tag, so prod runs the exact image that dev ran
+              env.BUILD_VERSION = env.CHANGE_ID
+                ? "${env.VERSION}-pr${env.CHANGE_ID}.${env.BUILD_NUMBER}"
+                : "${env.VERSION}-${env.GIT_COMMIT.substring(0, 7)}"
+              currentBuild.displayName += " version ${env.BUILD_VERSION}"
+            }
+          }
+        }
+
+        stage('Test') {
+          agent {
+            docker {
+              // Keep in sync with .tool-versions and the Dockerfile
+              image 'oven/bun:1.4.3-alpine'
+              args '-u root'
+              reuseNode true
+            }
+          }
+          steps {
+            sh 'bun install --frozen-lockfile'
+            sh 'bun run check-types'
+            // The Static Code Scan stage reads the lcov output
+            sh 'bun test --coverage --coverage-reporter=lcov'
+          }
+        }
+
+        // SonarQube Community Edition can't analyze pull requests, so only main is scanned
+        stage('Static Code Scan') {
+          when { branch 'main' }
+          agent {
+            docker {
+              image 'sonarsource/sonar-scanner-cli:latest'
+              args '-u root --privileged'
+              // Reuse the workspace, so the scanner reads coverage/lcov.info from the Test stage
+              reuseNode true
+            }
+          }
+          steps {
+            withSonarQubeEnv('SonarQube Server') {
+              sh "sonar-scanner -Dsonar.projectVersion=${BUILD_VERSION}"
+            }
+          }
+        }
+
+        stage('Build Docker Image') {
+          steps {
+            sh 'docker build -f Dockerfile . -t ${IMAGE_URL}:${BUILD_VERSION}'
+          }
+        }
+
+        stage('Image Vulnerability Scan') {
+          agent {
+            docker {
+              image 'aquasec/trivy:latest'
+              args '-v /var/run/docker.sock:/var/run/docker.sock -v trivy_cache:/.cache --entrypoint="" -u root --privileged'
+              // Run on the node that built the image
+              reuseNode true
+            }
+          }
+          steps {
+            sh 'trivy image --format template --template \"@/contrib/html.tpl\" --output report.html --severity HIGH,CRITICAL --no-progress ${IMAGE_URL}:${BUILD_VERSION}'
+
+            publishHTML target : [
+              allowMissing: true,
+              alwaysLinkToLastBuild: false,
+              keepAll: true,
+              reportDir: '.',
+              reportFiles: 'report.html',
+              reportName: 'Trivy Scan Report',
+            ]
+          }
+        }
+
+        stage('Push to registry') {
+          when { branch 'main' }
+          steps {
+            withCredentials([usernamePassword(credentialsId: 'docker-hub-credential', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+              sh 'echo $PASSWORD | docker login -u $USERNAME --password-stdin'
+              sh 'docker push ${IMAGE_URL}:${BUILD_VERSION}'
+            }
+          }
+        }
+
+        // The manifest repo bill-please-backend also deploys bill-please-ocr, which sets OCR_IMAGE_TAG
+        stage('Deploy to dev') {
+          when { branch 'main' }
+          steps {
+            build job: env.DEV_DEPLOY_JOB, parameters: [string(name: 'API_IMAGE_TAG', value: env.BUILD_VERSION)]
+          }
+          post {
+            // The build only ends after Promote, so say now that dev has it
+            success {
+              discordSend description: "Deployed to dev. Open the build to promote it to production.", link: env.BUILD_URL, result: 'SUCCESS', title: "${env.JOB_NAME} - # ${env.BUILD_VERSION} on dev", webhookURL: "https://discord.com/api/webhooks/${env.DISCORD_WEBHOOK_ID}/${env.DISCORD_WEBHOOK_TOKEN}"
+            }
           }
         }
       }
-    }
 
-    stage('Test') {
-      agent {
-        docker {
-          // Keep in sync with .tool-versions.
-          image 'oven/bun:1.4.3-alpine'
-          args '-u root'
-          reuseNode true
-        }
-      }
-      steps {
-        sh 'bun install --frozen-lockfile'
-        sh 'bun run check-types'
-        // lcov output is picked up by the Static Code Scan stage.
-        sh 'bun test --coverage --coverage-reporter=lcov'
-      }
-    }
-
-    stage('Static Code Scan') {
-      agent {
-        docker {
-          image 'sonarsource/sonar-scanner-cli:latest'
-          args '-u root --privileged'
-          // Reuse the workspace so the scanner sees coverage/lcov.info from the Test stage.
-          reuseNode true
-        }
-      }
-      steps {
-        withSonarQubeEnv('SonarQube Server') {
-          sh "sonar-scanner -Dsonar.projectVersion=${BUILD_VERSION}"
+      post {
+        always {
+          sh 'docker rmi ${IMAGE_URL}:${BUILD_VERSION} || true'
         }
       }
     }
 
-    stage('Build Docker Image') {
+    // Waits without an executor. Test the build on dev first. A build that nobody promotes within
+    // 7 days ends as ABORTED and leaves prod as it was
+    stage('Promote to production') {
+      when { branch 'main' }
+      options { timeout(time: 7, unit: 'DAYS') }
       steps {
-        script {
-          currentBuild.displayName += " version ${BUILD_VERSION}"
-        }
-        sh 'docker build -f Dockerfile . -t ${IMAGE_URL}:${BUILD_VERSION}'
-      }
-    }
-
-    stage('Image Vulnerability Scan') {
-      agent {
-        docker {
-          image 'aquasec/trivy:latest'
-          args '-v /var/run/docker.sock:/var/run/docker.sock -v trivy_cache:/.cache --entrypoint="" -u root --privileged'
-        }
-      }
-      steps {
-        sh 'trivy image --format template --template \"@/contrib/html.tpl\" --output report.html --severity HIGH,CRITICAL --no-progress ${IMAGE_URL}:${BUILD_VERSION}'
-
-        publishHTML target : [
-          allowMissing: true,
-          alwaysLinkToLastBuild: false,
-          keepAll: true,
-          reportDir: '.',
-          reportFiles: 'report.html',
-          reportName: 'Trivy Scan Report',
-        ]
-      }
-    }
-
-    stage('Push to registry') {
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'docker-hub-credential', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-          sh 'echo $PASSWORD | docker login -u $USERNAME --password-stdin'
-          sh 'docker push ${IMAGE_URL}:${BUILD_VERSION}'
-        }
-      }
-    }
-
-    stage('Clear Image') {
-      steps {
-        sh 'docker rmi ${IMAGE_URL}:${BUILD_VERSION}'
-      }
-    }
-
-    // The manifest repo bill-please-backend also deploys bill-please-ocr, which sets OCR_IMAGE_TAG
-    stage('Deploy to Kubernetes') {
-      steps {
-        build job: "${DEPLOY_JOB}", parameters: [string(name: 'API_IMAGE_TAG', value: "${BUILD_VERSION}")]
+        // The milestones stop an older build from deploying to prod after a newer one already has
+        milestone(1)
+        input message: "Deploy ${env.BUILD_VERSION} to production?", ok: 'Promote'
+        milestone(2)
+        build job: env.PROD_DEPLOY_JOB, parameters: [string(name: 'API_IMAGE_TAG', value: env.BUILD_VERSION)]
       }
     }
   }
