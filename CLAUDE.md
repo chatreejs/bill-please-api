@@ -154,18 +154,19 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 
 The app runs in the user's k3s cluster. The `Dockerfile` uses `oven/bun:1.4.3-alpine` in both stages, the same tag as `.tool-versions` and the CI Test stage, installs production dependencies only, runs as the non-root `bun` user and has a wget healthcheck on `/livez`. There is no docker-compose, because the user never runs Docker locally and Jenkins builds the images.
 
-The Jenkins pipeline in `ci/Jenkinsfile` is copied from `../passwords`. Its stages run in this order:
+The repo uses GitHub flow: `main` is the only long-lived branch, and every change, bug fixes and Dependabot bumps included, goes through a pull request. `ci/Jenkinsfile` runs as a Jenkins Multibranch Pipeline, which builds `main` and each PR. Its stages run in this order:
 
-1. Prepare Env reads the version from package.json. On `develop` it becomes `X.Y.Z-develop.<date>.<build>`.
+1. Prepare Env reads the version from package.json. A PR build is tagged `X.Y.Z-pr<PR number>.<build>`, and a `main` build `X.Y.Z-<short commit>`, so each `main` image has its own tag.
 2. Test runs check-types and the tests with lcov coverage in `oven/bun:1.4.3-alpine`. Keep that tag in sync with `.tool-versions` and the `Dockerfile`.
-3. SonarQube scans with `sonar-project.properties`.
-4. It builds the Docker image, scans it with Trivy and pushes `chatreejs/bill-please-api` to Docker Hub.
-5. It triggers the gitops job `chatreejs/gitops/bill-please-backend-manifest-{dev,prod}` with the parameter `API_IMAGE_TAG`, then notifies Discord.
+3. On `main` only, SonarQube scans with `sonar-project.properties`. Community Edition can't analyze PRs.
+4. It builds the Docker image and scans it with Trivy. A PR build stops here, and Jenkins reports the result to the PR as a status check.
+5. On `main`, it pushes `chatreejs/bill-please-api` to Docker Hub, triggers the gitops job `chatreejs/gitops/bill-please-backend-manifest-dev` with `API_IMAGE_TAG`, and posts to Discord that dev has it.
+6. Promote to production waits up to 7 days, without an executor, for someone to click Promote on the build. It then triggers `chatreejs/gitops/bill-please-backend-manifest-prod` with the same tag, so prod runs the image dev ran. Milestones stop an older build from deploying after a newer one has. To roll back, run the prod gitops job by hand with an older tag.
 
 The manifest repo is `../../gitlab.com/chatreedev-manifest/bill-please-backend`. One Helm chart deploys this server and bill-please-ocr into the `bill-please-backend-{dev,prod}` namespaces, and the ocr pipeline sets `OCR_IMAGE_TAG` on the same gitops jobs. In the cluster, the api config points at the in-release OCR service and the shared llm-server.
 
-- **Dev.** The Argo CD app `bill-please-backend-dev` (namespace `argocd`, the `applications.argoproj.io` resource) auto-syncs `main` of the manifest repo with prune and self-heal. A push to `develop` therefore reaches dev without a manual sync, once Jenkins has built the image and the gitops job has written the tag into `values-dev.yaml`. Dev serves `https://beta.api.chatree.dev/bill-please`; a Traefik middleware strips `/bill-please`, so `/health` is at `/bill-please/health`. Dev runs both services at `LOG_LEVEL=DEBUG`.
-- **Prod.** `values-prod.yaml` is for `api.chatree.dev`, but there is no prod Argo CD app yet. Going live needs a merge to `main` in both code repos, the release Jenkins builds, a prod Argo CD app and `VITE_APP_BILL_PLEASE_API_URL=https://api.chatree.dev/bill-please` in the Vercel prod env of bill-please web.
+- **Dev.** The Argo CD app `bill-please-backend-dev` (namespace `argocd`, the `applications.argoproj.io` resource) auto-syncs `main` of the manifest repo with prune and self-heal. A merge to `main` therefore reaches dev without a manual sync, once Jenkins has built the image and the gitops job has written the tag into `values-dev.yaml`. Dev serves `https://beta.api.chatree.dev/bill-please`; a Traefik middleware strips `/bill-please`, so `/health` is at `/bill-please/health`. Dev runs both services at `LOG_LEVEL=DEBUG`.
+- **Prod.** `values-prod.yaml` is for `api.chatree.dev`, but there is no prod Argo CD app yet. Going live needs Promote on the `main` builds of both code repos, a prod Argo CD app and `VITE_APP_BILL_PLEASE_API_URL=https://api.chatree.dev/bill-please` in the Vercel prod env of bill-please web.
 - **Traffic path.** Cloudflare, then the cloudflared tunnel pod (namespace `cloudflare-tunnel`), then Traefik, then the pod. Traefik replaces `X-Forwarded-For` with the cloudflared pod IP, so with `TRUST_PROXY=true` (the chart default) the app reads `CF-Connecting-IP` first.
 - **Replicas.** api runs 1 replica with no HPA in either environment, because each pod keeps its own in-memory rate limiter. Dev had an HPA override until 2026-10-30, and it could not read CPU or memory metrics.
 - **Shutdown.** Both pods sleep 5 s in `preStop` (the Kubernetes `sleep` action, no binary needed), so Traefik stops routing to them before SIGTERM. api then lets in-flight scans finish within `terminationGracePeriodSeconds: 90`, which covers the OCR timeout, the LLM queue wait and the LLM timeout (20 s + 20 s + 45 s), and ocr within 30 s. Without the sleep, a rollout answered 504. With it, a restart under a request every 0.5 s returned 82 of 82 with 200.
@@ -179,7 +180,7 @@ Done: the REST endpoints, the OCR and LLM scanner, the zod contract, CORS, rate 
 
 Likely next steps:
 
-1. Code work happens on `develop`, with `git@github.com:chatreejs/bill-please-api` as the remote. Add commitlint and husky like bill-please, for Conventional Commits with a lowercase subject.
+1. Code work happens on short-lived branches with PRs into `main`, with `git@github.com:chatreejs/bill-please-api` as the remote. Add commitlint and husky like bill-please, for Conventional Commits with a lowercase subject.
 2. Point the Helm chart's liveness probe at `/livez` and its readiness probe at `/readyz` with `timeoutSeconds: 3`. Finish the scanner: test it on real receipts, and maybe a cloud fallback. The user hasn't chosen a cloud provider.
 3. Use a shared rate-limit store if the server runs as several replicas.
 4. Add lint and format tooling. bill-please uses eslint and prettier, with single quotes and trailing commas.
