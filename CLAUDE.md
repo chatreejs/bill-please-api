@@ -160,7 +160,7 @@ The repo uses GitHub flow: `main` is the only long-lived branch, and every chang
 2. Test runs check-types and the tests with lcov coverage in `oven/bun:1.4.3-alpine`. Keep that tag in sync with `.tool-versions` and the `Dockerfile`.
 3. On `main` only, SonarQube scans with `sonar-project.properties`. Community Edition can't analyze PRs.
 4. It builds the Docker image and scans it with Trivy. A PR build stops here, and Jenkins reports the result to the PR as a status check.
-5. On `main`, it pushes `chatreejs/bill-please-api` to Docker Hub, triggers the gitops job `chatreejs/gitops/bill-please-backend-manifest-dev` with `API_IMAGE_TAG`, and posts to Discord that dev has it.
+5. On `main`, it pushes `chatreejs/bill-please-api` to Docker Hub, triggers the gitops job `chatreejs/gitops/bill-please-backend-manifest-dev` with `API_IMAGE_TAG`, and posts to Discord that dev has it. Discord messages use the Jenkins Secret text credential `discord-webhook-url`, the full webhook URL.
 6. Promote to production waits up to 7 days, without an executor, for someone to click Promote on the build. It then triggers `chatreejs/gitops/bill-please-backend-manifest-prod` with the same tag, so prod runs the image dev ran. Milestones stop an older build from deploying after a newer one has. To roll back, run the prod gitops job by hand with an older tag.
 
 The manifest repo is `../../gitlab.com/chatreedev-manifest/bill-please-backend`. One Helm chart deploys this server and bill-please-ocr into the `bill-please-backend-{dev,prod}` namespaces, and the ocr pipeline sets `OCR_IMAGE_TAG` on the same gitops jobs. In the cluster, the api config points at the in-release OCR service and the shared llm-server.

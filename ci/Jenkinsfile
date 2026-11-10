@@ -3,6 +3,16 @@
 // - A pull request runs the tests, builds the image and scans it, then stops. Nothing is pushed or deployed.
 // - main pushes the image, deploys it to dev, and then waits for someone to click Promote, which
 //   deploys the same image to prod. Nothing is rebuilt for prod.
+
+// Posts to Discord. The webhook URL is the Secret text credential discord-webhook-url, so Jenkins
+// masks it in the build log. A string credential needs no workspace, so this also works in stages
+// that run without an agent
+def notifyDiscord(Map message) {
+  withCredentials([string(credentialsId: 'discord-webhook-url', variable: 'DISCORD_WEBHOOK_URL')]) {
+    discordSend(message + [webhookURL: env.DISCORD_WEBHOOK_URL])
+  }
+}
+
 pipeline {
   // Only the Build stage takes an executor, so a build waiting for Promote doesn't hold one
   agent none
@@ -124,7 +134,7 @@ pipeline {
           post {
             // The build only ends after Promote, so say now that dev has it
             success {
-              discordSend description: "Deployed to dev. Open the build to promote it to production.", link: env.BUILD_URL, result: 'SUCCESS', title: "${env.JOB_NAME} - # ${env.BUILD_VERSION} on dev", webhookURL: "https://discord.com/api/webhooks/${env.DISCORD_WEBHOOK_ID}/${env.DISCORD_WEBHOOK_TOKEN}"
+              script { notifyDiscord(description: "Deployed to dev. Open the build to promote it to production.", link: env.BUILD_URL, result: 'SUCCESS', title: "${env.JOB_NAME} - # ${env.BUILD_VERSION} on dev") }
             }
           }
         }
@@ -154,10 +164,10 @@ pipeline {
 
   post {
     success {
-      discordSend description: "Duration: ${currentBuild.durationString}", link: env.BUILD_URL, result: currentBuild.currentResult, title: "${env.JOB_NAME} - # ${env.BUILD_VERSION}", footer: "${currentBuild.getBuildCauses()[0].shortDescription}",webhookURL: "https://discord.com/api/webhooks/${env.DISCORD_WEBHOOK_ID}/${env.DISCORD_WEBHOOK_TOKEN}"
+      script { notifyDiscord(description: "Duration: ${currentBuild.durationString}", link: env.BUILD_URL, result: currentBuild.currentResult, title: "${env.JOB_NAME} - # ${env.BUILD_VERSION}", footer: "${currentBuild.getBuildCauses()[0].shortDescription}") }
     }
     failure {
-      discordSend description: "Duration: ${currentBuild.durationString}", link: env.BUILD_URL, result: currentBuild.currentResult, title: "${env.JOB_NAME} - # ${env.BUILD_VERSION}", footer: "${currentBuild.getBuildCauses()[0].shortDescription}",webhookURL: "https://discord.com/api/webhooks/${env.DISCORD_WEBHOOK_ID}/${env.DISCORD_WEBHOOK_TOKEN}"
+      script { notifyDiscord(description: "Duration: ${currentBuild.durationString}", link: env.BUILD_URL, result: currentBuild.currentResult, title: "${env.JOB_NAME} - # ${env.BUILD_VERSION}", footer: "${currentBuild.getBuildCauses()[0].shortDescription}") }
     }
   }
 
