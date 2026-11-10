@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1000 508" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-title architecture-desc" id="architecture-root">
+      <title id="architecture-title">bill-please-api architecture</title>
+      <desc id="architecture-desc">bill-please web sends receipt scans and keeps a status stream open to bill-please-api, which checks the Turnstile token with Cloudflare, sends the photo to bill-please-ocr and only the OCR text to llm-server, and checks both dependencies every 5 seconds; Kubernetes probes livez and readyz.</desc>
+      <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Serif:ital@0;1&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Sans+TC:wght@400;500;600&amp;family=Noto+Serif+TC:wght@400&amp;display=swap');
+      #architecture-root { --color-paper:  #f5f5f5;
+      --color-ink:    #2d3142;
+      --color-muted:  #4f5d75;
+      --font-sans:    'Geist', system-ui, sans-serif;
+      --font-serif:   'Instrument Serif', serif;
+      --font-mono:    'Geist Mono', ui-monospace, monospace; }
+      #architecture-root { font-family: var(--font-sans); color: var(--color-ink); }
+      #architecture-root .scroll { overflow-x: auto; }</style>
+        <pattern id="architecture-dots" width="22" height="22" patternUnits="userSpaceOnUse">
+          <circle cx="1" cy="1" r="0.9" fill="#2d3142" fill-opacity="0.10"/>
+        </pattern>
+        <marker id="architecture-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+        <marker id="architecture-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+        <marker id="architecture-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+      </defs>
+      <rect width="100%" height="100%" fill="#f5f5f5"/>
+      <rect width="100%" height="100%" fill="url(#architecture-dots)" opacity="0.55"/>
+<rect x="304" y="164" width="600" height="256" rx="8" fill="#2d3142" stroke="#2d3142" stroke-width="0.8" fill-opacity="0.02" stroke-opacity="0.10"/>
+<rect x="556" y="168" width="96" height="12" rx="2" fill="#f5f5f5"/>
+<text x="604" y="177" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">K3S CLUSTER</text>
+<line x1="200" y1="216" x2="332" y2="216" stroke="#bf4520" stroke-width="1.4" marker-end="url(#architecture-arrow-accent)"/>
+<line x1="200" y1="240" x2="332" y2="240" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<line x1="200" y1="364" x2="332" y2="364" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+<line x1="424" y1="196" x2="424" y2="112" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<line x1="516" y1="216" x2="680" y2="216" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<line x1="516" y1="240" x2="680" y2="240" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#architecture-arrow)"/>
+<line x1="516" y1="352" x2="680" y2="352" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<line x1="516" y1="376" x2="680" y2="376" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#architecture-arrow)"/>
+<rect x="220" y="198" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="207" fill="#bf4520" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">POST /SCAN</text>
+<rect x="220" y="246" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="255" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">STATUS SSE</text>
+<rect x="208" y="346" width="88" height="12" rx="2" fill="#f5f5f5"/>
+<text x="252" y="355" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">/LIVEZ /READYZ</text>
+<rect x="432" y="136" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="464" y="145" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SITEVERIFY</text>
+<rect x="580" y="198" width="36" height="12" rx="2" fill="#f5f5f5"/>
+<text x="598" y="207" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">PHOTO</text>
+<rect x="566" y="246" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="598" y="255" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">/READYZ 5S</text>
+<rect x="556" y="334" width="84" height="12" rx="2" fill="#f5f5f5"/>
+<text x="598" y="343" fill="#2e5aa8" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OCR TEXT ONLY</text>
+<rect x="566" y="382" width="64" height="12" rx="2" fill="#f5f5f5"/>
+<text x="598" y="391" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">/MODELS 5S</text>
+<rect x="40" y="196" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="40" y="196" width="160" height="64" rx="6" fill="#4f5d75" stroke="#5a6580" stroke-width="1" fill-opacity="0.10"/>
+<rect x="48" y="204" width="38" height="12" rx="2" fill="none" stroke="#5a6580" stroke-width="0.8" stroke-opacity="0.40"/>
+<text x="67" y="213" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CLIENT</text>
+<text x="120" y="235" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">bill-please web</text>
+<text x="120" y="251" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">React PWA</text>
+<rect x="40" y="332" width="160" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="40" y="332" width="160" height="64" rx="6" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+<rect x="48" y="340" width="23" height="12" rx="2" fill="none" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.22"/>
+<text x="59.5" y="349" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">K8S</text>
+<text x="120" y="371" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Kubernetes</text>
+<text x="120" y="387" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">kubelet probes</text>
+<rect x="332" y="48" width="184" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="332" y="48" width="184" height="64" rx="6" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+<rect x="340" y="56" width="23" height="12" rx="2" fill="none" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.22"/>
+<text x="351.5" y="65" fill="#5a6580" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">EXT</text>
+<text x="424" y="87" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Cloudflare Turnstile</text>
+<text x="424" y="103" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">siteverify</text>
+<rect x="332" y="196" width="184" height="200" rx="6" fill="#f5f5f5"/>
+<rect x="332" y="196" width="184" height="200" rx="6" fill="#bf4520" stroke="#bf4520" stroke-width="1" fill-opacity="0.08"/>
+<rect x="340" y="204" width="23" height="12" rx="2" fill="none" stroke="#bf4520" stroke-width="0.8" stroke-opacity="0.50"/>
+<text x="351.5" y="213" fill="#bf4520" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">API</text>
+<text x="424" y="289" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">bill-please-api</text>
+<text x="424" y="305" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Bun + Elysia</text>
+<text x="424" y="319" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">LLM queue · zod contract</text>
+<text x="424" y="333" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">dependency monitor</text>
+<rect x="680" y="196" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="680" y="196" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="688" y="204" width="23" height="12" rx="2" fill="none" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.40"/>
+<text x="699.5" y="213" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">OCR</text>
+<text x="780" y="235" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">bill-please-ocr</text>
+<text x="780" y="251" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">FastAPI · PaddleOCR</text>
+<rect x="680" y="332" width="200" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="680" y="332" width="200" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="688" y="340" width="23" height="12" rx="2" fill="none" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.40"/>
+<text x="699.5" y="349" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LLM</text>
+<text x="780" y="371" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">llm-server</text>
+<text x="780" y="387" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">llama.cpp · OpenAI API</text>
+<line x1="40" y1="444" x2="960" y2="444" stroke="#2d3142" stroke-width="0.8" stroke-opacity="0.10"/>
+<text x="40" y="460" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="476" width="14" height="10" rx="2" fill="#bf4520" stroke="#bf4520" stroke-width="1" fill-opacity="0.08"/>
+<text x="60" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">This service</text>
+<rect x="152" y="476" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="172" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Backend service</text>
+<rect x="284" y="476" width="14" height="10" rx="2" fill="#2d3142" stroke="#2d3142" stroke-width="1" fill-opacity="0.03" stroke-opacity="0.30"/>
+<text x="304" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">External</text>
+<rect x="380" y="476" width="14" height="10" rx="2" fill="#4f5d75" stroke="#5a6580" stroke-width="1" fill-opacity="0.10"/>
+<text x="400" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Client</text>
+<line x1="468" y1="482" x2="496" y2="482" stroke="#bf4520" stroke-width="1.4" marker-end="url(#architecture-arrow-accent)"/>
+<text x="504" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Receipt scan</text>
+<line x1="588" y1="482" x2="616" y2="482" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<text x="624" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">HTTP call</text>
+<line x1="692" y1="482" x2="720" y2="482" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+<text x="728" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Probe</text>
+<line x1="776" y1="482" x2="804" y2="482" stroke="#4f5d75" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#architecture-arrow)"/>
+<text x="812" y="484" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Dependency check, every 5 s</text>
+    </svg>
