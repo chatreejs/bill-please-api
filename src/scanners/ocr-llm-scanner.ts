@@ -30,7 +30,9 @@ export class OcrLlmReceiptScanner implements ReceiptScanner {
 
   async scan(image: ReceiptImage, { signal, onProgress }: ScanOptions = {}): Promise<ReceiptScanResult> {
     onProgress?.({ stage: 'ocr' });
-    const ocr = await this.ocr.recognize(image);
+    const ocr = await this.ocr.recognize(image, signal);
+    // The client can cancel just as OCR returns. Then skip the LLM call
+    signal?.throwIfAborted();
     const confidence = meanConfidence(ocr.lines);
     // Skip the LLM call, which costs 10 s or more, when there is nothing to read
     if (ocr.lines.length === 0 || confidence < this.minMeanConfidence) {
