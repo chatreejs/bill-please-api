@@ -141,6 +141,7 @@ const streamStatus = (
   headers: Record<string, unknown>,
 ) => {
   const encoder = new TextEncoder();
+  const startedAt = performance.now();
   let stop = () => {};
 
   const stream = new ReadableStream<Uint8Array>({
@@ -180,6 +181,9 @@ const streamStatus = (
         clearInterval(heartbeat);
         unsubscribe();
         requestSignal.removeEventListener('abort', onAbort);
+        // The access log writes a stream when its first byte goes out, so log how long it stayed open here
+        const elapsedMs = Math.round(performance.now() - startedAt);
+        log.info(`Closed the status stream after ${elapsedMs}ms`, { stream: { elapsedMs } });
       };
       requestSignal.addEventListener('abort', onAbort, { once: true });
 
