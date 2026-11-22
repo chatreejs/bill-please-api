@@ -1,4 +1,7 @@
+import type { Span } from '@opentelemetry/api';
+
 import { getLogger } from '../logger.ts';
+import { context, failSpan, startSpan } from '../telemetry.ts';
 import { ScannerBusyError } from './errors.ts';
 import type { Extraction } from './extraction.ts';
 import type { ExtractOptions, ReceiptExtractor } from './llm-client.ts';
@@ -160,10 +163,31 @@ export class QueuedExtractor implements ReceiptExtractor {
   }
 
   extract(ocrText: string, options: ExtractOptions = {}): Promise<Extraction> {
-    return this.limiter.run(
-      () => this.extractor.extract(ocrText, options),
-      options.signal,
-      (position) => options.onEvent?.({ type: 'queued', position }),
-    );
+    // The queue can report a new position from another scan's release, so keep this scan's context
+    const parent = context.active();
+    // An llm.queue span covers the wait, so a trace shows how long the scan waited for a slot
+    let wait: Span | undefined;
+    const endWait = (error?: unknown) => {
+      if (!wait) return;
+      if (error) failSpan(wait, error);
+      wait.end();
+      wait = undefined;
+    };
+    return this.limiter
+      .run(
+        () => {
+          endWait();
+          return this.extractor.extract(ocrText, options);
+        },
+        options.signal,
+        (position) => {
+          wait ??= startSpan('llm.queue', { 'llm.queue.position': position }, parent);
+          options.onEvent?.({ type: 'queued', position });
+        },
+      )
+      .catch((error: unknown) => {
+        endWait(error);
+        throw error;
+      });
   }
 }

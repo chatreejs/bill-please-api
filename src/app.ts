@@ -7,9 +7,8 @@ import { createDependencyMonitor, createReadinessCheck, type DependencyMonitor }
 import { clientIp, requestLogger } from './request-logger.ts';
 import { receiptRoutes } from './routes/receipts.ts';
 import type { ReceiptScanner } from './scanners/index.ts';
+import { POLLED_PATHS, tracing } from './telemetry.ts';
 import { createTurnstileVerifier, type TurnstileVerifier } from './turnstile.ts';
-
-const POLLED_PATHS = new Set(['/health', '/livez', '/readyz', '/api/receipts/status']);
 
 export const createApp = (
   config: Config,
@@ -29,6 +28,8 @@ export const createApp = (
   ),
 ) =>
   new Elysia()
+    // First, so the request span covers every other plugin. It adds nothing when tracing is off
+    .use(tracing())
     // Check OCR and the LLM in the background while the server listens. app.handle() in tests never starts the monitor
     .onStart(() => dependencies.start())
     .onStop(() => dependencies.stop())

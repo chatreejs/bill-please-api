@@ -116,6 +116,16 @@ The default is `INFO`. Every response has an `X-Request-Id` header. Send your ow
 `X-Request-Id` to find the same request in the logs of several services. The
 scanner passes it on to bill-please-ocr.
 
+## Tracing
+
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` to an OTLP/HTTP endpoint, such as an OpenTelemetry
+Collector on port 4318, to send traces. A scan's trace has the request, the call to
+bill-please-ocr with the OCR service's own spans under it, the wait for an LLM slot and the
+LLM call with its token counts. `OTEL_SERVICE_NAME` (default `bill-please-api`) sets the
+service name on each trace, and `OTEL_RESOURCE_ATTRIBUTES` adds attributes such as
+`deployment.environment.name=prod`. Probes and `GET /api/receipts/status` get no
+trace. Without the endpoint, tracing is off.
+
 ## Docker
 
 The Jenkins pipeline in `ci/Jenkinsfile` builds and deploys the image. It runs the

@@ -1,6 +1,8 @@
+import type { Span } from '@opentelemetry/api';
 import * as z from 'zod';
 
 import { getLogger } from '../logger.ts';
+import { SpanKind, traceHeaders, withSpan } from '../telemetry.ts';
 import { type Extraction, ExtractionSchema, extractionGrammar, extractionJsonSchema } from './extraction.ts';
 import { type ExtractionEvent, ItemCounter } from './progress.ts';
 import { SYSTEM_PROMPT, userPrompt } from './prompt.ts';
@@ -62,7 +64,19 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
     } = {},
   ) {}
 
-  async extract(ocrText: string, { signal, onEvent }: ExtractOptions = {}): Promise<Extraction> {
+  extract(ocrText: string, options: ExtractOptions = {}): Promise<Extraction> {
+    const attributes = {
+      'http.request.method': 'POST',
+      'url.full': `${this.url}/chat/completions`,
+      'gen_ai.request.model': this.model,
+      'llm.ocr_chars': ocrText.length,
+    };
+    return withSpan(`chat ${this.model}`, { kind: SpanKind.CLIENT, attributes }, (span) =>
+      this.send(ocrText, options, span),
+    );
+  }
+
+  private async send(ocrText: string, { signal, onEvent }: ExtractOptions, span: Span): Promise<Extraction> {
     const startedAt = performance.now();
     onEvent?.({ type: 'started' });
     log.info(`Calling LLM ${this.model}`, {
@@ -72,6 +86,7 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        ...traceHeaders(),
         ...(this.options.apiKey ? { authorization: `Bearer ${this.options.apiKey}` } : {}),
       },
       body: JSON.stringify({
@@ -119,6 +134,11 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
         completionTokens: completion.usage?.completion_tokens,
         finishReason: completion.finishReason,
       },
+    });
+    span.setAttributes({
+      'gen_ai.usage.input_tokens': completion.usage?.prompt_tokens,
+      'gen_ai.usage.output_tokens': completion.usage?.completion_tokens,
+      'gen_ai.response.finish_reasons': completion.finishReason ? [completion.finishReason] : undefined,
     });
     if (completion.finishReason === 'length') {
       throw new Error('LLM output was cut off at max_tokens');
