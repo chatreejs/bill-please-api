@@ -111,6 +111,9 @@ Logs are JSON lines, one object per record, for Loki or any log collector:
 
 The logger writes an error as an `error` field with `type`, `message`, `stack` and `cause`.
 
+With tracing on, a record written during a traced request also has `traceId` and `spanId`.
+A derived field on Grafana's Loki datasource can turn `traceId` into a link to the trace in Tempo.
+
 `LOG_LEVEL` sets the level to `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF`.
 The default is `INFO`. Every response has an `X-Request-Id` header. Send your own
 `X-Request-Id` to find the same request in the logs of several services. The

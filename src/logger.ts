@@ -1,9 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
+import { isSpanContextValid, trace } from '@opentelemetry/api';
+
 /**
  * Minimal JSON logger. Every record is one JSON object on one line:
  *   {"time":"2026-10-30T14:03:12.345Z","level":"info","service":"bill-please-api","logger":"receipts.route","requestId":"9f2c1a7e","msg":"Scanned receipt with 4 items"}
  * Plain object arguments become fields of the record, and an Error becomes the `error` field.
+ * A record written inside an OpenTelemetry span also has `traceId` and `spanId`. Grafana uses
+ * `traceId` to link the log line in Loki to its trace in Tempo.
  */
 
 export const LOG_LEVELS = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'OFF'] as const;
@@ -99,6 +103,7 @@ export const getLogger = (name: string): Logger => {
       if (!isEnabled(level)) return;
 
       const requestId = logContext.getStore()?.requestId;
+      const span = trace.getActiveSpan()?.spanContext();
       const fields: Record<string, unknown> = {};
       const extras: unknown[] = [];
       for (const arg of args) {
@@ -115,6 +120,7 @@ export const getLogger = (name: string): Logger => {
             service: options.service,
             logger: name,
             ...(requestId ? { requestId } : {}),
+            ...(span && isSpanContextValid(span) ? { traceId: span.traceId, spanId: span.spanId } : {}),
             msg: message,
           },
           { ...fields, ...(extras.length ? { args: extras } : {}) },

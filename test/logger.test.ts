@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { context, trace } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
 import { configureLogger, getLogger, logContext, parseLogLevel } from '../src/logger.ts';
 
@@ -42,6 +44,32 @@ describe('logger', () => {
     const [inside, outside] = records();
     expect(inside.requestId).toBe('abcd1234');
     expect(outside).not.toHaveProperty('requestId');
+  });
+
+  describe('inside a span', () => {
+    const contextManager = new AsyncLocalStorageContextManager();
+    beforeAll(() => context.setGlobalContextManager(contextManager.enable()));
+    afterAll(() => {
+      contextManager.disable();
+      context.disable();
+    });
+
+    it('adds the trace and span ids of the active span', () => {
+      const traceId = '0af7651916cd43dd8448eb211c80319c';
+      const spanId = 'b7ad6b7169203331';
+      const span = trace.wrapSpanContext({ traceId, spanId, traceFlags: 1 });
+      context.with(trace.setSpan(context.active(), span), () => getLogger('test').info('in span'));
+      getLogger('test').info('outside');
+      const [inside, outside] = records();
+      expect(inside).toMatchObject({ traceId, spanId });
+      expect(outside).not.toHaveProperty('traceId');
+    });
+
+    it('leaves the ids out when the span context is invalid', () => {
+      const span = trace.wrapSpanContext({ traceId: '0'.repeat(32), spanId: '0'.repeat(16), traceFlags: 0 });
+      context.with(trace.setSpan(context.active(), span), () => getLogger('test').info('no trace'));
+      expect(records()[0]).not.toHaveProperty('traceId');
+    });
   });
 
   it('serializes errors with message, stack and cause', () => {
