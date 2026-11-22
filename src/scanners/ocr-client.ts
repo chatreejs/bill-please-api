@@ -1,6 +1,7 @@
 import * as z from 'zod';
 
 import { getLogger, logContext } from '../logger.ts';
+import { SpanKind, traceHeaders, withSpan } from '../telemetry.ts';
 import { UnreadableReceiptError } from './errors.ts';
 import type { ReceiptImage } from './types.ts';
 
@@ -31,7 +32,16 @@ export class HttpOcrClient implements OcrClient {
     private readonly timeoutMs: number,
   ) {}
 
-  async recognize(image: ReceiptImage, signal?: AbortSignal): Promise<OcrResult> {
+  recognize(image: ReceiptImage, signal?: AbortSignal): Promise<OcrResult> {
+    const attributes = { 'http.request.method': 'POST', 'url.full': `${this.url}/v1/ocr`, 'ocr.image.bytes': image.data.length };
+    return withSpan('POST /v1/ocr', { kind: SpanKind.CLIENT, attributes }, async (span) => {
+      const result = await this.send(image, signal);
+      span.setAttributes({ 'ocr.lines': result.lines.length, 'ocr.mean_confidence': meanConfidence(result.lines) });
+      return result;
+    });
+  }
+
+  private async send(image: ReceiptImage, signal?: AbortSignal): Promise<OcrResult> {
     const form = new FormData();
     form.append('image', new Blob([image.data], { type: image.mimeType }), 'receipt');
 
@@ -41,7 +51,7 @@ export class HttpOcrClient implements OcrClient {
     const res = await fetch(`${this.url}/v1/ocr`, {
       method: 'POST',
       body: form,
-      headers: requestId ? { 'x-request-id': requestId } : {},
+      headers: { ...traceHeaders(), ...(requestId ? { 'x-request-id': requestId } : {}) },
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
         : AbortSignal.timeout(this.timeoutMs),

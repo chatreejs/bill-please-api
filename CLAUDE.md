@@ -49,6 +49,8 @@ src/
     prompt.ts         system prompt with one short example
     postprocess.ts    toReceiptItems (compact output to the contract), resolveRates and reconcile (vs printed total)
   turnstile.ts        createTurnstileVerifier(): Cloudflare siteverify check, undefined without a secret key
+  telemetry.ts        OpenTelemetry: startTelemetry()/stopTelemetry(), the tracing() Elysia plugin, withSpan(),
+                      traceHeaders() for outgoing calls, POLLED_PATHS (no trace, no rate limit)
   routes/receipts.ts  GET /status (LLM queue state, JSON or an SSE stream) and the REST scan route: 403/503 for Turnstile, 415 for a bad mime type, 413 for size, 502 for a scanner failure
 test/app.test.ts      tests through app.handle(new Request(...)), without a real port
 test/scanner.test.ts  OCR and LLM scanner with a stub OCR client and extractor, no network
@@ -82,6 +84,12 @@ Key points:
   - The access log record has the message `METHOD path status Nms` and the fields `http: { method, path, status, durationMs }`, `clientIp` and `userAgent`. 2xx and 3xx log at INFO, 4xx at WARN and 5xx at ERROR. `/health`, `/livez` and `/readyz` from infra probes (User-Agent `kube-probe/*` or `Wget/*`) log only at DEBUG, unless they fail. Probe paths from anything else log at INFO.
   - `onRequest` resolves the client IP, because Bun can't see the socket after the response.
   - Never log image bytes or secrets. Tests capture output with `configureLogger({ write })`.
+- **Tracing.** `startTelemetry()` in `index.ts` starts the OpenTelemetry Node SDK only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. It runs before `createApp`, because `tracing()` adds the `@elysiajs/opentelemetry` plugin only when the SDK is running. Tests never set it, so every span is a no-op there.
+  - The plugin makes one server span per request, plus child spans for Elysia's lifecycle steps. `POLLED_PATHS` get no trace, because probes call them every 10 s and each open web page keeps a status stream open.
+  - Nothing traces Bun's `fetch`. Every outgoing call goes through `withSpan()` with `SpanKind.CLIENT` and sends `traceHeaders()`. The OCR call is `POST /v1/ocr` (`ocr.lines`, `ocr.mean_confidence`) and the LLM call is `chat <model>` (`gen_ai.usage.input_tokens` and `output_tokens`). bill-please-ocr reads the `traceparent` header, so its spans join the scan's trace.
+  - `QueuedExtractor` adds an `llm.queue` span while a scan waits for an LLM slot. It keeps the scan's context, because a later queue position can come from another scan's release.
+  - Take the tracer with `trace.getTracer()` on each call, as `telemetry.ts` does. A tracer taken at import time, before the SDK starts, stays a no-op.
+  - On SIGTERM, `stopTelemetry()` flushes the buffered spans after `app.stop()`.
 - **Turnstile.** `POST /api/receipts/scan` checks the single-use `cf-turnstile-response` token from bill-please web with Cloudflare's siteverify before any OCR or LLM work. It sends the client IP from `clientIp()` as `remoteip`. It answers 403 when the token is missing or rejected, the action isn't `receipt_scan`, or the hostname isn't in `TURNSTILE_HOSTNAMES`, and 503 when siteverify can't be reached (fail closed). Results from Cloudflare's test secret keys (`metadata.result_with_testing_key`) skip the action and hostname checks, because they always answer hostname `example.com` and no action. Without `TURNSTILE_SECRET_KEY` the check is off, like the web without `VITE_APP_TURNSTILE_SITE_KEY`. `createApp` takes the verifier as an optional third argument so tests can stub `fetch`.
 - **Probes.** `/livez` and `/health` always answer `{ status: 'ok' }`, so a down LLM never restarts the pod. `/readyz` calls bill-please-ocr `GET /readyz` and the LLM's `GET /models` in parallel, each with `READINESS_TIMEOUT_MS`, and answers 200 `{ status: 'ok', checks }` or 503 `{ status: 'unavailable', checks: { ocr, llm } }`. Concurrent calls share one check and a result is reused for 2 s, because `/readyz` is public. The rate limit skips all three, and probe user agents log them at DEBUG.
 - **Dependency availability.** `createDependencyMonitor` runs the readiness check when the server starts (Elysia `onStart`) and every 5 s until `onStop`. `available` turns false after 2 failed checks in a row, so an outage shows within about 10 s, and back to true on the first good check. It is true before the first check, and `app.handle()` in tests never starts the monitor. While it is false:
@@ -149,6 +157,9 @@ How the web calls this server, in `../bill-please/src/utils/receipt.util.ts`:
 | `TURNSTILE_TIMEOUT_MS` | `10000` | Timeout for the siteverify call |
 | `READINESS_TIMEOUT_MS` | `2000` | Timeout for each dependency check of `/readyz`. Keep it under the probe's `timeoutSeconds` |
 | `LOG_LEVEL` | `INFO` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | | OTLP/HTTP endpoint for traces. Empty turns tracing off. In the cluster it is `http://otel-collector.opentelemetry.svc.cluster.local:4318` |
+| `OTEL_SERVICE_NAME` | `bill-please-api` | `service.name` on the traces |
+| `OTEL_RESOURCE_ATTRIBUTES` | | For example `deployment.environment.name=prod`. The SDK reads the other standard `OTEL_*` variables too |
 
 ## Deployment
 
