@@ -64,41 +64,22 @@ describe('REST /api/receipts/scan', () => {
 });
 
 describe('request logging', () => {
-  it('assigns a request id and writes an access log record', async () => {
-    const res = await scan(png);
-    const requestId = res.headers.get('x-request-id');
-    expect(requestId).toMatch(/^[0-9a-f]{8}$/);
-
-    const record = await waitForLog((r) => r.requestId === requestId && r.logger === 'http.access');
+  it('writes an access log record', async () => {
+    await scan(png);
+    const record = await waitForLog((r) => r.logger === 'http.access' && r.http?.path === '/api/receipts/scan');
     expect(record?.http).toMatchObject({ method: 'POST', path: '/api/receipts/scan', status: 200 });
-    expect(logs.some((r) => r.requestId === requestId && r.logger === 'receipts.route')).toBe(true);
-  });
-
-  it('reuses a valid incoming X-Request-Id', async () => {
-    const res = await app.handle(
-      new Request('http://localhost/health', { headers: { 'x-request-id': 'trace-abc_123' } }),
-    );
-    expect(res.headers.get('x-request-id')).toBe('trace-abc_123');
-  });
-
-  it('ignores an unsafe incoming X-Request-Id', async () => {
-    const res = await app.handle(
-      new Request('http://localhost/health', { headers: { 'x-request-id': 'bad id with spaces' } }),
-    );
-    expect(res.headers.get('x-request-id')).toMatch(/^[0-9a-f]{8}$/);
   });
 
   it('logs /health from the web but not from kube-probe', async () => {
     const health = (userAgent: string) =>
       app.handle(new Request('http://localhost/health', { headers: { 'user-agent': userAgent } }));
 
-    const probe = await health('kube-probe/1.31');
-    const web = await health('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+    await health('kube-probe/1.31');
+    await health('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
 
-    const record = await waitForLog((r) => r.requestId === web.headers.get('x-request-id'));
+    const record = await waitForLog((r) => r.logger === 'http.access' && r.userAgent?.startsWith('Mozilla/'));
     expect(record?.level).toBe('info');
-    expect(record?.userAgent).toBe('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
-    expect(logs.some((r) => r.requestId === probe.headers.get('x-request-id'))).toBe(false);
+    expect(logs.some((r) => r.userAgent === 'kube-probe/1.31')).toBe(false);
   });
 
   it('logs scanner failures with the error', async () => {

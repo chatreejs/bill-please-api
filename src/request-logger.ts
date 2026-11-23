@@ -5,8 +5,6 @@ import { getLogger, logContext } from './logger.ts';
 
 const log = getLogger('http.access');
 
-const REQUEST_ID_PATTERN = /^[\w-]{1,64}$/;
-
 // Kubernetes liveness/readiness probes and the Docker HEALTHCHECK (wget)
 const PROBE_USER_AGENT = /^(kube-probe|wget)\//i;
 const PROBE_PATHS = new Set(['/health', '/livez', '/readyz']);
@@ -30,23 +28,17 @@ export const clientIp = (
   '';
 
 /**
- * Assigns every request an id (reusing a sane incoming `X-Request-Id`), exposes
- * it to all loggers via `logContext`, echoes it back in the response header and
- * writes one access log record per request.
+ * Writes one access log record per request. Each record has the request's traceId, which links
+ * it to the scan's other log lines and to its trace in Tempo.
  */
 export const requestLogger = (config: Config) =>
   new Elysia({ name: 'request-logger' })
-    .onRequest(({ request, set, server }) => {
-      const incoming = request.headers.get('x-request-id');
-      const requestId =
-        incoming && REQUEST_ID_PATTERN.test(incoming) ? incoming : crypto.randomUUID().slice(0, 8);
+    .onRequest(({ request, server }) => {
       logContext.enterWith({
-        requestId,
         startedAt: performance.now(),
         // Resolve now: Bun can no longer see the socket once the response is sent
         clientIp: clientIp(request, server, config.trustProxy),
       });
-      set.headers['x-request-id'] = requestId;
     })
     .onError({ as: 'global' }, ({ code, error, request }) => {
       // Expected client errors (404, validation) are covered by the access log

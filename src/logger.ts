@@ -4,7 +4,7 @@ import { isSpanContextValid, trace } from '@opentelemetry/api';
 
 /**
  * Minimal JSON logger. Every record is one JSON object on one line:
- *   {"time":"2026-10-30T14:03:12.345Z","level":"info","service":"bill-please-api","logger":"receipts.route","requestId":"9f2c1a7e","msg":"Scanned receipt with 4 items"}
+ *   {"time":"2026-10-30T14:03:12.345Z","level":"info","service":"bill-please-api","logger":"receipts.route","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"00f067aa0ba902b7","msg":"Scanned receipt with 4 items"}
  * Plain object arguments become fields of the record, and an Error becomes the `error` field.
  * A record written inside an OpenTelemetry span also has `traceId` and `spanId`. Grafana uses
  * `traceId` to link the log line in Loki to its trace in Tempo.
@@ -49,9 +49,8 @@ export const parseLogLevel = (value: string | undefined, fallback: LogLevel = 'I
   return (LOG_LEVELS as readonly string[]).includes(upper ?? '') ? (upper as LogLevel) : fallback;
 };
 
-/** Per-request context, added to every record logged during the request */
+/** Per-request state that the access log reads when the response is done */
 export interface LogContext {
-  requestId: string;
   startedAt: number;
   clientIp?: string;
 }
@@ -102,7 +101,6 @@ export const getLogger = (name: string): Logger => {
     (message: string, ...args: unknown[]) => {
       if (!isEnabled(level)) return;
 
-      const requestId = logContext.getStore()?.requestId;
       const span = trace.getActiveSpan()?.spanContext();
       const fields: Record<string, unknown> = {};
       const extras: unknown[] = [];
@@ -119,7 +117,6 @@ export const getLogger = (name: string): Logger => {
             level: level.toLowerCase(),
             service: options.service,
             logger: name,
-            ...(requestId ? { requestId } : {}),
             ...(span && isSpanContextValid(span) ? { traceId: span.traceId, spanId: span.spanId } : {}),
             msg: message,
           },

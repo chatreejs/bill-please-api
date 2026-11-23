@@ -33,15 +33,15 @@ src/
   config.ts           parses Bun.env into the `config` object
   health.ts           createReadinessCheck(): OCR GET /readyz and LLM GET /models, shared and cached for 2 s;
                       createDependencyMonitor(): runs it every 5 s and keeps `available` for the status and scan routes
-  logger.ts           JSON lines logger: getLogger(name), LOG_LEVEL, logContext (AsyncLocalStorage per request)
-  request-logger.ts   Elysia plugin: X-Request-Id, one access log record per request, unhandled errors; clientIp()
+  logger.ts           JSON lines logger: getLogger(name), LOG_LEVEL, logContext (AsyncLocalStorage per request, for the access log)
+  request-logger.ts   Elysia plugin: one access log record per request, unhandled errors; clientIp()
   schemas/receipt.ts  zod contract: ReceiptItemSchema, ReceiptScanResultSchema, SUPPORTED_IMAGE_TYPES
   scanners/
     types.ts          ReceiptScanner interface { scan(image): ReceiptScanResult }, ReceiptImage
     index.ts          createScanner(config) builds the OCR and LLM scanner, and scanReceiptImage()
     errors.ts         UnreadableReceiptError: no usable text in the image (REST 422), ScannerBusyError: LLM queue full or wait timed out (REST 503)
     ocr-llm-scanner.ts OcrLlmReceiptScanner: OCR, then LLM, then post-processing and a total check
-    ocr-client.ts     HttpOcrClient for bill-please-ocr POST /v1/ocr, forwards X-Request-Id
+    ocr-client.ts     HttpOcrClient for bill-please-ocr POST /v1/ocr
     llm-client.ts     OpenAiCompatibleExtractor: chat completions with a GBNF grammar or a json_schema response_format
     llm-queue.ts      ConcurrencyLimiter (FIFO, LLM_MAX_CONCURRENT slots) and QueuedExtractor, which wraps the extractor
     progress.ts       ScanProgress events and ItemCounter, which counts finished items in the streamed LLM output
@@ -78,8 +78,8 @@ Key points:
   - On 2026-11-02 the cluster llm-server (llama.cpp `--parallel 1`, Qwen3 4B on a 4 GB GPU) took about 12 s for a 10-item receipt with a warm prompt cache. It runs concurrent requests one after another inside llama.cpp, with latencies of 12, 25, 38 and 50 s for 4 requests at once, so the right `LLM_MAX_CONCURRENT` is 1. Raising it only helps after `llmServer.server.parallel` goes up, and each extra slot shares the 4096-token context.
   - llama.cpp rejects boolean subschemas, so `extraction.ts` strips the `items: false` that zod adds to tuples.
 - **Logging.** Never use `console.*`. Use `const log = getLogger('area.name')` from `src/logger.ts`, which depends only on `@opentelemetry/api`.
-  - Every record is one JSON object on one line: `time` (UTC ISO), `level` (lowercase), `service`, `logger`, `requestId` (only inside a request), `traceId` and `spanId` (only inside an OpenTelemetry span) and `msg`. Plain object arguments are merged into the record as fields. An Error becomes `error: { type, message, stack, cause }`. Any other argument goes into `args`. If a field can't be serialized, it is written as inspected text, so the record is never lost.
-  - The request id comes from `logContext`. `onRequest` sets it with `enterWith`, so it follows async calls without being passed around. The server reuses a valid incoming `X-Request-Id` and always sends it back.
+  - Every record is one JSON object on one line: `time` (UTC ISO), `level` (lowercase), `service`, `logger`, `traceId` and `spanId` (only inside an OpenTelemetry span) and `msg`. Plain object arguments are merged into the record as fields. An Error becomes `error: { type, message, stack, cause }`. Any other argument goes into `args`. If a field can't be serialized, it is written as inspected text, so the record is never lost.
+  - `traceId` is the only id that ties a request's records together. There is no request id. `onRequest` puts the start time and client IP in `logContext` with `enterWith`, and the access log reads them in `onAfterResponse`.
   - A scan logs one INFO record per step, with the numbers in fields: `Received receipt image` (`image`), `Calling OCR` (`ocr.url`), `OCR complete` (`ocr.lines`, `meanConfidence`, `durationMs` inside the OCR service, `elapsedMs` including the upload), `Calling LLM` (`llm.model`, `outputFormat`, `ocrChars`), `LLM complete` (`llm.elapsedMs`, `promptTokens`, `completionTokens`, `finishReason`), the rate fix when `resolveRates` changes anything (`rates.model`, `rates.resolved`), `Extracted N items` (`total`) and `Scan complete` (`scan.items`, `scan.elapsedMs`).
   - The access log record has the message `METHOD path status Nms` and the fields `http: { method, path, status, durationMs }`, `clientIp` and `userAgent`. 2xx and 3xx log at INFO, 4xx at WARN and 5xx at ERROR. `/health`, `/livez` and `/readyz` from infra probes (User-Agent `kube-probe/*` or `Wget/*`) log only at DEBUG, unless they fail. Probe paths from anything else log at INFO.
   - `onRequest` resolves the client IP, because Bun can't see the socket after the response.
