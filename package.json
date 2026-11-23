@@ -21,6 +21,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
     "@types/bun": "^1.4.2",
     "typescript": "^5.9.0"
   }
