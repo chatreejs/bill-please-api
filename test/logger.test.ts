@@ -2,7 +2,7 @@ import { context, trace } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 
-import { configureLogger, getLogger, logContext, parseLogLevel } from '../src/logger.ts';
+import { configureLogger, getLogger, parseLogLevel } from '../src/logger.ts';
 
 let logs: string[] = [];
 const records = () => logs.map((line) => JSON.parse(line));
@@ -36,14 +36,6 @@ describe('logger', () => {
     configureLogger({ level: 'OFF' });
     log.error('also hidden');
     expect(logs).toHaveLength(1);
-  });
-
-  it('adds the request id from the log context', () => {
-    logContext.run({ requestId: 'abcd1234', startedAt: 0 }, () => getLogger('test').info('in request'));
-    getLogger('test').info('outside');
-    const [inside, outside] = records();
-    expect(inside.requestId).toBe('abcd1234');
-    expect(outside).not.toHaveProperty('requestId');
   });
 
   describe('inside a span', () => {

@@ -1,6 +1,6 @@
 import * as z from 'zod';
 
-import { getLogger, logContext } from '../logger.ts';
+import { getLogger } from '../logger.ts';
 import { SpanKind, traceHeaders, withSpan } from '../telemetry.ts';
 import { UnreadableReceiptError } from './errors.ts';
 import type { ReceiptImage } from './types.ts';
@@ -45,13 +45,12 @@ export class HttpOcrClient implements OcrClient {
     const form = new FormData();
     form.append('image', new Blob([image.data], { type: image.mimeType }), 'receipt');
 
-    const requestId = logContext.getStore()?.requestId;
     const startedAt = performance.now();
     log.info('Calling OCR', { ocr: { url: this.url, bytes: image.data.length } });
     const res = await fetch(`${this.url}/v1/ocr`, {
       method: 'POST',
       body: form,
-      headers: { ...traceHeaders(), ...(requestId ? { 'x-request-id': requestId } : {}) },
+      headers: traceHeaders(),
       signal: signal
         ? AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)])
         : AbortSignal.timeout(this.timeoutMs),

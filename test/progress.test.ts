@@ -170,7 +170,6 @@ describe('POST /api/receipts/scan with Accept: text/event-stream', () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/event-stream');
-    expect(res.headers.get('x-request-id')).toBeTruthy();
     expect(await readEvents(res)).toEqual([
       { event: 'progress', data: { stage: 'ocr' } },
       { event: 'progress', data: { stage: 'llm', items: 1 } },

@@ -106,18 +106,19 @@ only from those sites. Without a secret key the check is off. The server answers
 Logs are JSON lines, one object per record, for Loki or any log collector:
 
 ```json
-{"time":"2026-10-30T15:34:11.908Z","level":"info","service":"bill-please-api","logger":"http.access","requestId":"982c4a53","msg":"GET /health 200 3ms","http":{"method":"GET","path":"/health","status":200,"durationMs":3},"clientIp":"::1","userAgent":"Mozilla/5.0"}
+{"time":"2026-10-30T15:34:11.908Z","level":"info","service":"bill-please-api","logger":"http.access","traceId":"4bf92f3577b34da6a3ce929d0e0e4736","spanId":"00f067aa0ba902b7","msg":"POST /api/receipts/scan 200 331ms","http":{"method":"POST","path":"/api/receipts/scan","status":200,"durationMs":331},"clientIp":"::1","userAgent":"Mozilla/5.0"}
 ```
 
 The logger writes an error as an `error` field with `type`, `message`, `stack` and `cause`.
 
-With tracing on, a record written during a traced request also has `traceId` and `spanId`.
-A derived field on Grafana's Loki datasource can turn `traceId` into a link to the trace in Tempo.
+With tracing on, a record written during a traced request has `traceId` and `spanId`.
+bill-please-ocr writes the same `traceId` for its part of a scan, so one `traceId` finds a
+scan's log lines in both services. A derived field on Grafana's Loki datasource can turn
+`traceId` into a link to the trace in Tempo. Probes and `GET /api/receipts/status` get no
+trace, so their records have no `traceId`.
 
 `LOG_LEVEL` sets the level to `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF`.
-The default is `INFO`. Every response has an `X-Request-Id` header. Send your own
-`X-Request-Id` to find the same request in the logs of several services. The
-scanner passes it on to bill-please-ocr.
+The default is `INFO`.
 
 ## Tracing
 
