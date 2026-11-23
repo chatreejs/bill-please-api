@@ -1,5 +1,6 @@
 import type { Config } from '../config.ts';
 import { getLogger } from '../logger.ts';
+import { withSpan } from '../telemetry.ts';
 import {
   ReceiptScanResultSchema,
   type ReceiptScanResult,
@@ -39,16 +40,24 @@ export const createScanner = (config: Config): ReceiptScanner =>
  * Scan an image and validate the scanner output against the shared contract,
  * so a misbehaving AI model can never send malformed items to clients.
  */
-export const scanReceiptImage = async (
+export const scanReceiptImage = (
   scanner: ReceiptScanner,
   image: ReceiptImage,
   options?: ScanOptions,
-): Promise<ReceiptScanResult> => {
-  const startedAt = performance.now();
-  const result = ReceiptScanResultSchema.parse(await scanner.scan(image, options));
-  const elapsedMs = Math.round(performance.now() - startedAt);
-  log.info(`Scan complete with ${result.items.length} items in ${elapsedMs}ms`, {
-    scan: { items: result.items.length, elapsedMs },
-  });
-  return result;
-};
+): Promise<ReceiptScanResult> =>
+  // The request span ends when the response starts, but a streamed scan keeps running.
+  // This span lasts until the scan finishes, so its duration is how long the visitor waits
+  withSpan(
+    'receipt.scan',
+    { attributes: { 'receipt.mime_type': image.mimeType, 'receipt.bytes': image.data.byteLength } },
+    async (span) => {
+      const startedAt = performance.now();
+      const result = ReceiptScanResultSchema.parse(await scanner.scan(image, options));
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      span.setAttribute('receipt.items', result.items.length);
+      log.info(`Scan complete with ${result.items.length} items in ${elapsedMs}ms`, {
+        scan: { items: result.items.length, elapsedMs },
+      });
+      return result;
+    },
+  );

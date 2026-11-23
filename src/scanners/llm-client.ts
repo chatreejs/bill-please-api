@@ -69,6 +69,8 @@ export class OpenAiCompatibleExtractor implements ReceiptExtractor {
       'http.request.method': 'POST',
       'url.full': `${this.url}/chat/completions`,
       'gen_ai.request.model': this.model,
+      // llm-server sends no spans. Tempo's service graph reads peer.service to add it as a node
+      'peer.service': 'llm-server',
       'llm.ocr_chars': ocrText.length,
     };
     return withSpan(`chat ${this.model}`, { kind: SpanKind.CLIENT, attributes }, (span) =>
